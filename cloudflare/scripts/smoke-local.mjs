@@ -9,7 +9,7 @@ if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || base.usernam
     throw new Error('This development smoke test is restricted to loopback instances.');
 }
 const { AUTH_PASSWORD: password } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
-assert.ok(password?.length >= 24, 'Run setup:local before this test.');
+assert.ok(password?.length > 0 && password.length <= 1024, 'Configure a nonempty AUTH_PASSWORD before this test.');
 const owner = await ownerClient(base, process.env.STWORKERS_TEST_PASSWORD || password);
 const authenticatedFetch = (pathname, options = {}) => fetch(new URL(pathname, base), {
     ...options,

@@ -11,7 +11,7 @@
 1. 点击按钮，登录 Cloudflare 并授权自己的 GitHub/GitLab 账号。
 2. 设置新副本名称，例如仓库 `STWorkers-button-test`、Worker `stworkers-button-test`；
    D1 和 R2 也使用新资源，不选择已有测试实例或其数据库。
-3. 填写至少 24 个字符的独立 `AUTH_PASSWORD`，不是模型 API Key。构建根目录为仓库根目录，
+3. 自行设置非空的登录密码 `AUTH_PASSWORD`，没有 24 字符要求，也不是模型 API Key。构建根目录为仓库根目录，
    构建命令 `npm run build`，部署命令 `npm run deploy`。
 4. 点击部署，成功后打开平台给出的地址，在原版登录页选择 `owner`，首次密码为上一步设置的值。
    登录后可在原版「账户」面板修改日常密码；不再使用浏览器 Basic 弹窗。

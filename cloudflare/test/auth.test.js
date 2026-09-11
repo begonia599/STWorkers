@@ -27,7 +27,7 @@ const passwordChange = (oldPassword, newPassword = 'new-test-password-long-enoug
 
 test('unconfigured instances and insecure non-loopback transport fail closed', async t => {
     const env = environment(t);
-    for (const password of [undefined, '', 'short', 'x'.repeat(1025)]) {
+    for (const password of [undefined, null, '', 123456, {}, 'x'.repeat(1025)]) {
         env.AUTH_PASSWORD = password;
         for (const path of ['/', '/login', '/scripts/login.js', '/api/users/login', '/csrf-token']) {
             assert.equal((await send(env, path)).status, 503);
@@ -35,6 +35,29 @@ test('unconfigured instances and insecure non-loopback transport fail closed', a
     }
     env.AUTH_PASSWORD = PASSWORD;
     assert.equal((await worker.fetch(new Request('http://public.example/login'), env)).status, 403);
+});
+
+test('nonempty owner passwords work without a minimum length or character-class requirement', async t => {
+    for (const password of ['a', 'test12', 'test1234', 'x'.repeat(23), 'x'.repeat(1024), ' p! ', '\u5bc6\u7801']) {
+        await t.test(`password of ${password.length} characters`, async t => {
+            const env = { ...environment(t), AUTH_PASSWORD: password };
+            assert.equal((await send(env, '/login')).status, 200);
+            assert.equal((await send(env, '/script.js')).status, 401);
+            const a = await loginClient(env);
+            const b = await loginClient(env);
+            assert.notEqual(a.cookie, b.cookie);
+            assert.equal((await a.fetch('/api/users/me')).status, 200);
+            const account = env.DB.sqlite.prepare('SELECT * FROM stworkers_accounts').get();
+            assert.equal(account.version, 1);
+            assert.equal(account.password_hash.length, 64);
+            assert.notEqual(account.password_hash, password);
+            const anonymous = await anonymousClient(env);
+            const rejected = await send(env, '/api/users/login', anonymous.headers, { handle: 'owner', password: 'incorrect' });
+            assert.equal(rejected.status, 403);
+            assert.equal(rejected.headers.get('Set-Cookie'), null);
+            assert.equal(env.AUTH_PASSWORD, password);
+        });
+    }
 });
 
 test('only minimal login assets are public; private CSS and plugins cannot leak', async t => {
@@ -145,14 +168,21 @@ test('logout deletes the session and rejects replay; another device stays signed
 test('password changes require the old password, rotate this cookie, revoke others and preserve data', async t => {
     const { env, client: a, call } = await harness(t);
     const b = await loginClient(env);
+    const beforeKey = env.DATA_KEY;
+    const beforeBootstrap = env.AUTH_PASSWORD;
     await call('/api/settings/save', syntheticCardState);
     await call('/api/secrets/write', { key: 'api_key_openai', value: 'synthetic-model-secret' });
     const before = env.DB.sqlite.prepare('SELECT * FROM documents ORDER BY kind,id').all();
-    for (const body of [passwordChange('wrong'), passwordChange(PASSWORD, ''), passwordChange(PASSWORD, 'short'),
-        { ...passwordChange(PASSWORD), handle: 'guest' }]) {
-        assert.ok([400, 403].includes((await send(env, '/api/users/change-password', a.headers, body)).status));
+    for (const invalid of ['', null, {}, 123456, 'x'.repeat(1025)]) {
+        const response = await send(env, '/api/users/change-password', a.headers, passwordChange(PASSWORD, invalid));
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).code, 'INVALID_PASSWORD');
     }
-    const change = await send(env, '/api/users/change-password', a.headers, passwordChange(PASSWORD));
+    for (const body of [passwordChange('wrong', 'short1'), { ...passwordChange(PASSWORD, 'short1'), handle: 'guest' }]) {
+        assert.equal((await send(env, '/api/users/change-password', a.headers, body)).status, 403);
+    }
+    clearLimit(env);
+    const change = await send(env, '/api/users/change-password', a.headers, passwordChange(PASSWORD, 'short1'));
     assert.equal(change.status, 204);
     const cookie = change.headers.get('Set-Cookie').split(';')[0];
     assert.notEqual(cookie, a.cookie);
@@ -162,22 +192,47 @@ test('password changes require the old password, rotate this cookie, revoke othe
     for (const old of [a, b]) assert.equal((await send(env, '/api/users/me', old.headers)).status, 401);
     const anonymous = await anonymousClient(env);
     assert.equal((await send(env, '/api/users/login', anonymous.headers, { handle: 'owner', password: PASSWORD })).status, 403);
-    assert.equal((await loginClient(env, 'new-test-password-long-enough')).headers.Origin, ORIGIN);
+    assert.equal((await loginClient(env, 'short1')).headers.Origin, ORIGIN);
     assert.deepEqual(env.DB.sqlite.prepare('SELECT * FROM documents ORDER BY kind,id').all(), before);
     assert.equal(await readModelSecret(env, 'api_key_openai'), 'synthetic-model-secret');
+    assert.equal(env.DATA_KEY, beforeKey);
+    assert.equal(env.AUTH_PASSWORD, beforeBootstrap);
 });
 
-test('secret rotation recovers only with the new deployment password and preserves owner profile', async t => {
-    const env = environment(t);
-    const a = await loginClient(env);
+test('password changes accept the nonempty and maximum-length boundaries', async t => {
+    for (const password of ['a', 'x'.repeat(1024)]) {
+        await t.test(`new password of ${password.length} characters`, async t => {
+            const env = environment(t);
+            const client = await loginClient(env);
+            const response = await send(env, '/api/users/change-password', client.headers, passwordChange(PASSWORD, password));
+            assert.equal(response.status, 204);
+            assert.equal((await client.fetch('/api/users/me')).status, 401);
+            assert.equal((await (await loginClient(env, password)).fetch('/api/users/me')).status, 200);
+        });
+    }
+});
+
+test('short deployment password recovers the owner without changing profile, stored data or DATA_KEY', async t => {
+    const { env, client: a, call, importCard } = await harness(t);
     await send(env, '/api/users/change-name', a.headers, { handle: 'owner', name: 'Preserved' });
-    env.AUTH_PASSWORD = 'rotated-deployment-secret-at-least-24';
+    await call('/api/settings/save', syntheticCardState);
+    await call('/api/secrets/write', { key: 'api_key_openai', value: 'synthetic-model-secret' });
+    await importCard();
+    const beforeDocuments = env.DB.sqlite.prepare('SELECT * FROM documents ORDER BY kind,id').all();
+    const beforeObjects = structuredClone(env.FILES.objects);
+    const beforeKey = env.DATA_KEY;
+    const beforeProfile = await (await a.fetch('/api/users/me')).json();
+    env.AUTH_PASSWORD = 'reset1';
     assert.equal((await send(env, '/api/users/me', a.headers)).status, 401);
     const anon = await anonymousClient(env);
     assert.equal((await send(env, '/api/users/login', anon.headers, { handle: 'owner', password: PASSWORD })).status, 403);
     const restored = await loginClient(env);
-    assert.equal((await (await restored.fetch('/api/users/me')).json()).name, 'Preserved');
+    assert.deepEqual(await (await restored.fetch('/api/users/me')).json(), beforeProfile);
     assert.equal(env.DB.sqlite.prepare('SELECT version FROM stworkers_accounts').get().version, 2);
+    assert.deepEqual(env.DB.sqlite.prepare('SELECT * FROM documents ORDER BY kind,id').all(), beforeDocuments);
+    assert.deepEqual(env.FILES.objects, beforeObjects);
+    assert.equal(env.DATA_KEY, beforeKey);
+    assert.equal(await readModelSecret(env, 'api_key_openai'), 'synthetic-model-secret');
 });
 
 test('profile edits persist but never disclose private details in anonymous user list', async t => {

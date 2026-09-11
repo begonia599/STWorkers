@@ -1,16 +1,27 @@
 # Owner Accounts and Cookie Sessions
 
 This replaces the initial HTTP Basic gate with the upstream SillyTavern login page
-and account profile UI. It is a **single-owner** backend, not public registration
-or the complete upstream multi-user server.
+and account profile UI. It is a custom **single-owner** Workers/D1 backend, not
+unchanged upstream authentication, public registration or the complete multi-user server.
 
 ## Using the Account
 
-1. Deploy with an independent `AUTH_PASSWORD` of 24-1024 characters. Keep it private.
+1. Deploy with your own nonempty `AUTH_PASSWORD`. Keep it private; it is not a model API key.
 2. Open the instance, select `owner` on the original login page, and enter that password.
 3. Open User Settings -> Account to change the everyday password. Supply the current
-   password and a new password of 12-1024 characters. Passwordless accounts are not allowed.
+   password and a nonempty new password. Passwordless accounts are not allowed.
 4. Use the original Logout button to revoke the current session.
+
+Bootstrap, recovery and everyday passwords share the same policy: nonempty strings,
+up to the existing 1024-character input cap, without minimum length or character-class
+requirements. The former 24/12-character minimums were project additions, not upstream
+ST or Cloudflare requirements. Updating this policy does not replace existing passwords,
+invalidate sessions, change password hashes or rotate `DATA_KEY`.
+Local setup can still generate a random password by default; using that format is optional.
+The legacy asset substring scan skips passwords shorter than 16 characters to avoid
+confusing ordinary public text with leaked secrets; this is not a password-length rule.
+It still scans encryption keys, deployment tokens and longer passwords. Leak scanning
+is heuristic, not a substitute for keeping credentials out of build inputs and tracked files.
 
 The login HTML and `scripts/login.js` are reused without modification.
 The account module receives three small adjustments: failed logout shows an error,
@@ -60,8 +71,8 @@ The secret remains a pepper and deployment-owner recovery credential.
 
 If the account password is lost:
 
-1. In the correct Cloudflare Worker, replace `AUTH_PASSWORD` with a **new**, independently
-   generated password of at least 24 characters and deploy the secret change.
+1. In the correct Cloudflare Worker, replace `AUTH_PASSWORD` with a **new** nonempty
+   password of your choice and deploy the secret change.
 2. Keep `DATA_KEY`, D1 and R2 unchanged.
 3. Reload, select `owner`, and sign in with the new secret value.
 
@@ -131,8 +142,8 @@ servers still use their own Basic configuration for independent comparisons.
 For smoke/cloud API probes after a password change, supply the current account
 password through `STWORKERS_TEST_PASSWORD`, not a command-line argument.
 
-The account migration has not yet been applied to the live Cloudflare instance.
-Local evidence does not establish real Workers HTTPS/browser behavior, D1 latency,
+The initial migration results below were recorded before the live Cloudflare update.
+Local evidence alone does not establish real Workers HTTPS/browser behavior, D1 latency,
 free-tier CPU, button deployment or full community-card compatibility.
 
 ## Recorded Local Results
@@ -161,3 +172,25 @@ free-tier CPU, button deployment or full community-card compatibility.
 
 Older P1-P4 browser scripts were adapted to Cookie login, but their complete historical
 card/generation/cancellation suites were not all rerun in this account-migration pass.
+
+## Password Policy Regression (2026-09-12)
+
+- Full suite: **308 passed, 0 failed, 0 skipped**.
+- Standard build: 665 assets; Wrangler dry-run: 666.96 KiB, gzip 129.84 KiB.
+- Short bootstrap and repeat login, short password change, nonempty/maximum input
+  boundaries, Unicode and punctuation, rejected incorrect passwords, CSRF and
+  session revocation passed. Empty, non-string and oversized passwords still fail.
+- Short recovery password preserved the existing owner profile, document rows,
+  character object bytes, encryption key and readable model credentials in synthetic tests.
+- Cloud setup kept a user-chosen short password byte for byte on rerun; default random
+  generation and independent 32-byte `DATA_KEY` validation remain unchanged.
+- Original desktop 1440x1000 and mobile 390x844 login/profile UI passed with an
+  8-character initial password and a 6-character changed password, including reload,
+  old-device revocation, logout, failed-logout reporting and synthetic generation.
+  No page errors or unexpected HTTP errors occurred.
+- Local evidence:
+  `cloudflare/.build/account-check/30544431-0420-4356-95a3-ecea28be969d/results.json`.
+  Browser screenshots were inspected; login HTML/JavaScript matched upstream bytes.
+- This verification used only isolated local data. It did not read or replace any
+  deployed password, `DATA_KEY`, storage binding or user document, and does not claim
+  an authenticated cloud login or a real model-provider test.

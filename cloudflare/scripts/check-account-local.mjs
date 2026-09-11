@@ -15,9 +15,10 @@ const output = path.join(root, '.build', 'account-check', randomUUID());
 const scriptPath = path.join(root, '.build', 'worker', 'index.js');
 const require = createRequire(process.argv[2] ?? new URL('../package.json', import.meta.url));
 const { chromium } = require('playwright');
-const password = randomBytes(36).toString('base64url');
-const changedPassword = randomBytes(24).toString('base64url');
+const password = randomBytes(6).toString('base64url');
+const changedPassword = randomBytes(4).toString('base64url');
 const evidence = { scope: 'Isolated local workerd, real D1, original login/profile UI. No cloud deployment or real model.',
+    passwordLengths: { bootstrap: password.length, changed: changedPassword.length },
     checks: [], screenshots: [], pageErrors: [], httpErrors: [], revokedRequests: [], outbound: [] };
 const revokedCookies = new Set(), responseChecks = [];
 const mark = value => { evidence.checks.push(value); console.log(`PASS: ${value}`); };
@@ -144,7 +145,7 @@ try {
     await desktop.locator('#errorMessage').filter({ hasText: 'Incorrect handle or password.' }).waitFor();
     await loginThroughPage(desktop, base, password);
     await appReady(desktop);
-    mark('Original desktop login page: redirect, readable wrong-password error, real login and account controls');
+    mark('Original desktop login page: redirect, wrong-password error, 8-character password login and account controls');
     assert.equal(await desktop.locator('#logout_button').isVisible(), false); // Its drawer is initially closed.
     const session = (await desktop.context().cookies()).find(cookie => cookie.name.endsWith('stworkers-session'));
     assert.equal(session.httpOnly, true);
@@ -200,7 +201,7 @@ try {
     assert.equal((await post(desktop, '/api/settings/get', {})).status, 200);
     await mobile.reload({ waitUntil: 'domcontentloaded' });
     await mobile.waitForURL('**/login');
-    mark('Original profile changes password, rotates current cookie and invalidates desktop replay and mobile session');
+    mark('Original profile accepts a 6-character password, rotates current cookie and invalidates desktop replay and mobile session');
     await loginThroughPage(mobile, base, changedPassword);
     await appReady(mobile);
     await profile(mobile);

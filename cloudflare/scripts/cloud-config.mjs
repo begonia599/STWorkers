@@ -82,8 +82,9 @@ export function validateCloudConfig(config, base, name, { draft = false } = {}) 
 export function validateCloudSecrets(secrets) {
     requireValue(secrets && isDeepStrictEqual(Object.keys(secrets).sort(), ['AUTH_PASSWORD', 'DATA_KEY']),
         'The secrets file must contain only AUTH_PASSWORD and DATA_KEY.');
-    requireValue(typeof secrets.AUTH_PASSWORD === 'string' && /^[A-Za-z0-9_-]{48}$/.test(secrets.AUTH_PASSWORD),
-        'AUTH_PASSWORD must be the independent 48-character generated password.');
+    requireValue(typeof secrets.AUTH_PASSWORD === 'string' && secrets.AUTH_PASSWORD.length > 0
+        && secrets.AUTH_PASSWORD.length <= 1024,
+        'AUTH_PASSWORD must be a nonempty password of at most 1024 characters.');
     requireValue(typeof secrets.DATA_KEY === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(secrets.DATA_KEY)
         && Buffer.from(secrets.DATA_KEY, 'base64').length === 32
         && Buffer.from(secrets.DATA_KEY, 'base64').toString('base64') === secrets.DATA_KEY,
@@ -174,6 +175,10 @@ export async function checkAssets(root, config, secrets = {}, selectedPlugins = 
     let files = 0;
     let bytes = 0;
     let largestFileBytes = 0;
+    // Short passwords can coincide with ordinary asset text; they are not reliable leak markers.
+    const leakMarkers = Object.entries(secrets)
+        .filter(([name, value]) => name !== 'AUTH_PASSWORD' || value.length >= 16)
+        .map(([, value]) => Buffer.from(value));
     async function visit(directory) {
         for (const entry of await readdir(directory, { withFileTypes: true })) {
             const file = path.join(directory, entry.name);
@@ -192,7 +197,7 @@ export async function checkAssets(root, config, secrets = {}, selectedPlugins = 
             requireValue(files <= 20000 && information.size <= 25 * 1024 * 1024,
                 'Assets exceed the checked Free-plan file-count or per-file limit.');
             const contents = await readFile(file);
-            requireValue(!Object.values(secrets).some(secret => contents.includes(Buffer.from(secret))),
+            requireValue(!leakMarkers.some(secret => contents.includes(secret)),
                 'A deployment secret was found in static assets. Do not upload.');
             bytes += information.size;
             largestFileBytes = Math.max(largestFileBytes, information.size);

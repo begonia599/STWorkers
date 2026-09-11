@@ -14,7 +14,7 @@
 `stworkers-button-test`、`stworkers-button-test-db`、`stworkers-button-test-files`。
 不要选择已有 `stworks-cloud-test` 的资源，也不要导入唯一的重要数据。
 所有者测试时需为仓库副本换一个名称，避免与源仓库 `STWorkers` 冲突。
-设置独立的至少 24 字符访问密码，保留根目录、`npm run build` 和 `npm run deploy`；
+自行设置非空的登录密码，保留根目录、`npm run build` 和 `npm run deploy`；
 部署成功后使用 `owner` 和该密码登录。无需将模型 Key 填到部署表单。
 账号新版使用原版登录页和 Cookie 会话，首次登录后可在原版账户面板改密。
 `AUTH_PASSWORD` 仍用于初始化及账号恢复，`DATA_KEY` 不随改密变化。
@@ -26,7 +26,7 @@
 当前实验入口供用户按以下目标流程实测，不预先保证每一步已通过：
 
 1. 点击项目的 Deploy to Cloudflare 按钮，登录 Cloudflare，授权自己的 GitHub/GitLab 账号。
-2. 在设置页确认新仓库、Worker、D1 和私有 R2 名称，设置至少 24 个字符的独立访问密码。
+2. 在设置页确认新仓库、Worker、D1 和私有 R2 名称，自行设置非空的登录密码，不要求 24 字符。
 3. 接受构建与部署命令，等待平台准备插件、打包、初始化和部署。
 4. 打开实际分配的地址，用户名为 `owner`；使用刚设置的访问密码登录，再在原版界面配置模型。
 5. 要增减预装插件时，在自己的仓库编辑 `plugins.txt`，提交到生产分支并等待一次构建部署。

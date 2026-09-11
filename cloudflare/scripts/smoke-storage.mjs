@@ -9,7 +9,7 @@ if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || base.usernam
     throw new Error('This test only runs against an explicitly local instance.');
 }
 const { AUTH_PASSWORD } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
-assert.ok(AUTH_PASSWORD?.length >= 24);
+assert.ok(AUTH_PASSWORD?.length > 0 && AUTH_PASSWORD.length <= 1024, 'Configure a nonempty AUTH_PASSWORD before this test.');
 const owner = await ownerClient(base, process.env.STWORKERS_TEST_PASSWORD || AUTH_PASSWORD);
 const send = (pathname, options = {}) => fetch(new URL(pathname, base), {
     ...options, signal: AbortSignal.timeout(20000),

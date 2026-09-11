@@ -126,12 +126,23 @@ test('preflight rejects auth bypass, local assets, extra vars, remote hooks and 
     }
 });
 
-test('secret checks reject missing, extra, malformed or weak credentials', () => {
+test('secret checks reject missing, extra or malformed credentials', () => {
     validateCloudSecrets(secrets());
     for (const value of [null, {}, { AUTH_PASSWORD: 'only-one' }, { ...secrets(), CLOUDFLARE_API_TOKEN: 'never-copy' },
-        { ...secrets(), AUTH_PASSWORD: 'short' }, { ...secrets(), DATA_KEY: 'invalid' },
+        ...['', null, 123456, {}, 'x'.repeat(1025)].map(AUTH_PASSWORD => ({ ...secrets(), AUTH_PASSWORD })),
+        { ...secrets(), DATA_KEY: 'invalid' },
         { ...secrets(), DATA_KEY: randomBytes(31).toString('base64') }]) {
         assert.throws(() => validateCloudSecrets(value));
+    }
+});
+
+test('user-chosen nonempty passwords pass without changing the independent encryption key', () => {
+    for (const AUTH_PASSWORD of ['a', 'test12', 'test1234', 'x'.repeat(23), 'x'.repeat(1024), ' p! ', '\u5bc6\u7801']) {
+        const value = { ...secrets(), AUTH_PASSWORD };
+        const before = structuredClone(value);
+        validateCloudSecrets(value);
+        assert.deepEqual(value, before);
+        assert.throws(() => validateCloudSecrets({ ...value, DATA_KEY: 'short' }));
     }
 });
 
@@ -144,6 +155,7 @@ test('setup creates independent credentials without changing local settings; rer
     const saved = await readFile(keyFile);
     const savedConfig = await readFile(configFile);
     validateCloudSecrets(JSON.parse(saved));
+    assert.match(JSON.parse(saved).AUTH_PASSWORD, /^[A-Za-z0-9_-]{48}$/);
     assert.equal(first.created, true);
     assert.equal((await prepareCloud(root)).created, false);
     assert.deepEqual(await readFile(keyFile), saved);
@@ -152,6 +164,22 @@ test('setup creates independent credentials without changing local settings; rer
     assert.deepEqual(JSON.parse(await readFile(path.join(root, 'wrangler.jsonc'))), base);
     const second = await prepareCloud(root, { name: 'stworks-second-test' });
     assert.notDeepEqual(JSON.parse(await readFile(path.join(second.directory, 'secrets.json'))), JSON.parse(saved));
+});
+
+test('rerun and preflight preserve a short chosen password without mistaking ordinary asset text for a leak', async t => {
+    const root = await fixture(t);
+    const prepared = await prepareCloud(root, ids);
+    const keyFile = path.join(prepared.directory, 'secrets.json');
+    const values = JSON.parse(await readFile(keyFile));
+    values.AUTH_PASSWORD = 'h';
+    await json(keyFile, values);
+    const saved = await readFile(keyFile);
+    const { assets } = await assetsFixture(root);
+    assert.equal((await prepareCloud(root, ids)).created, false);
+    assert.equal((await checkCloud(root)).resourceIdsConfigured, true);
+    assert.deepEqual(await readFile(keyFile), saved);
+    await writeFile(path.join(assets, 'index.html'), values.DATA_KEY);
+    await assert.rejects(checkCloud(root), /secret was found/);
 });
 
 test('rerun preserves manually filled IDs and rejects conflicting setup options', async t => {
@@ -282,8 +310,10 @@ test('preflight rejects private files, leaked deployment secrets and per-file ov
         await rm(path.join(assets, file));
     }
     const key = JSON.parse(await readFile(path.join(prepared.directory, 'secrets.json')));
-    await writeFile(path.join(assets, 'index.html'), key.DATA_KEY);
-    await assert.rejects(checkCloud(root), /secret was found/);
+    for (const secret of [key.DATA_KEY, key.AUTH_PASSWORD]) {
+        await writeFile(path.join(assets, 'index.html'), secret);
+        await assert.rejects(checkCloud(root), /secret was found/);
+    }
     await writeFile(path.join(assets, 'index.html'), Buffer.alloc(25 * 1024 * 1024 + 1));
     await assert.rejects(checkCloud(root), /per-file limit/);
     assert.equal((await stat(path.join(assets, 'index.html'))).size, 25 * 1024 * 1024 + 1);

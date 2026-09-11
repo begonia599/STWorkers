@@ -49,8 +49,8 @@ function configured(request, env) {
     if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
         throw new HttpError(403, 'HTTPS_REQUIRED', 'Use HTTPS to sign in.');
     }
-    if (typeof env.AUTH_PASSWORD !== 'string' || env.AUTH_PASSWORD.length < 24 || env.AUTH_PASSWORD.length > 1024) {
-        throw new HttpError(503, 'OWNER_NOT_CONFIGURED', 'Configure AUTH_PASSWORD before using this instance.');
+    if (!validPassword(env.AUTH_PASSWORD)) {
+        throw new HttpError(503, 'OWNER_NOT_CONFIGURED', 'Set AUTH_PASSWORD to a nonempty password of at most 1024 characters.');
     }
     if (!env.DB) throw new HttpError(503, 'DB_NOT_CONFIGURED', 'Configure and migrate the account database first.');
 }
@@ -114,8 +114,8 @@ async function authBody(request, maxBytes = 8192) {
     return parseJsonObject(await readBytes(request, maxBytes));
 }
 
-function validPassword(value, minimum = 1) {
-    return typeof value === 'string' && value.length >= minimum && value.length <= 1024;
+function validPassword(value) {
+    return typeof value === 'string' && value.length > 0 && value.length <= 1024;
 }
 
 async function verifier(password, salt, env) {
@@ -201,7 +201,7 @@ export async function handleUsers(request, env, session, action) {
     if (action === 'login') return login(request, env);
     if (action.startsWith('recover-')) {
         return Response.json({ error: 'Recovery codes are not sent to logs. In Cloudflare, replace AUTH_PASSWORD '
-            + 'with a new random password of at least 24 characters and deploy it. Then sign in as owner using that password. '
+            + 'with a new nonempty password of at most 1024 characters and deploy it. Then sign in as owner using that password. '
             + 'Keep DATA_KEY unchanged.' }, { status: 501 });
     }
     if (action === 'me') {
@@ -223,8 +223,8 @@ export async function handleUsers(request, env, session, action) {
     const body = await authBody(request, action === 'change-avatar' ? 512 * 1024 : 8192);
     if (body.handle !== 'owner') throw new HttpError(403, 'WRONG_ACCOUNT', 'Only the signed-in owner can be changed.');
     if (action === 'change-password') {
-        if (!validPassword(body.newPassword, 12)) {
-            throw new HttpError(400, 'WEAK_PASSWORD', 'Use a password between 12 and 1024 characters. Passwordless login is disabled.');
+        if (!validPassword(body.newPassword)) {
+            throw new HttpError(400, 'INVALID_PASSWORD', 'Use a nonempty password of at most 1024 characters. Passwordless login is disabled.');
         }
         const account = await env.DB.prepare("SELECT * FROM stworkers_accounts WHERE handle = 'owner'").bind().first();
         if (!validPassword(body.oldPassword) || !await equal(await verifier(body.oldPassword, account.salt, env), account.password_hash)) {

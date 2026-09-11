@@ -114,7 +114,7 @@
     "cloudflare": {
         "bindings": {
             "AUTH_PASSWORD": {
-                "description": "Choose a unique access password of at least 24 characters. Login name: owner. This is NOT your model API key. Keep the password private."
+                "description": "Choose your own nonempty access password. Login name: owner. This is NOT your model API key. Keep the password private."
             },
             "DB": {
                 "description": "Private settings, character cards, chat indexes and encrypted model credentials. Create a new database for a new installation."

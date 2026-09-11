@@ -1,7 +1,7 @@
 # Set the owner bootstrap/recovery secret in Cloudflare. First login uses this password.
 # Change the everyday password in the original account panel after signing in.
 # Replacing AUTH_PASSWORD recovers the account and invalidates all previous sessions.
-# At least 24 characters. Never use a model API key as this password.
+# Choose your own nonempty password. Never use a model API key as this password.
 AUTH_PASSWORD=
 # DATA_KEY is initialized independently by the guarded deployment script.
 # Never put a real password, API token, or encryption key in this example file.
