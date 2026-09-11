@@ -1,3 +1,4 @@
+import { prepareAvatarUpload } from './scripts/stworks-avatar.js';
 import {
     showdown,
     moment,
@@ -7440,6 +7441,8 @@ async function read_avatar_load(input) {
             const croppedImage = await dlg.show();
 
             if (!croppedImage) {
+                input.value = '';
+                if (selected_button == 'create') create_save.avatar = null;
                 return;
             }
 
@@ -9717,9 +9720,7 @@ export async function createOrEditCharacter(e) {
             //if the character name text area isn't empty (only posible when creating a new character)
             let url = '/api/characters/create';
 
-            if (crop_data != undefined) {
-                url += `?crop=${encodeURIComponent(JSON.stringify(crop_data))}`;
-            }
+            await prepareAvatarUpload(formData, crop_data);
 
             formData.delete('alternate_greetings');
             for (const value of create_save.alternate_greetings) {
@@ -9808,9 +9809,7 @@ export async function createOrEditCharacter(e) {
         try {
             let url = '/api/characters/edit';
 
-            if (crop_data != undefined) {
-                url += `?crop=${encodeURIComponent(JSON.stringify(crop_data))}`;
-            }
+            await prepareAvatarUpload(formData, crop_data);
 
             formData.delete('alternate_greetings');
             const chid = $('.open_alternate_greetings').data('chid');

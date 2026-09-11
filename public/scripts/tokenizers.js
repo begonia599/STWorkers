@@ -7,9 +7,9 @@ import { getStringHash } from './utils.js';
 import { kai_flags, kai_settings } from './kai-settings.js';
 import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer, getTextGenModel } from './textgen-settings.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, openRouterModels } from './textgen-models.js';
-export { BYTES_PER_TOKEN as CHARACTERS_PER_TOKEN_RATIO };
+import { BYTES_PER_TOKEN, TOKEN_ESTIMATOR, estimateText, estimateMessages } from './stworks-token-estimator.js';
+export { BYTES_PER_TOKEN, BYTES_PER_TOKEN as CHARACTERS_PER_TOKEN_RATIO, TOKEN_ESTIMATOR as tokenEstimator };
 
-export const BYTES_PER_TOKEN = 3.35;
 export const TOKENIZER_WARNING_KEY = 'tokenizationWarningShown';
 export const TOKENIZER_SUPPORTED_KEY = 'tokenizationSupported';
 
@@ -153,8 +153,7 @@ const TOKENIZER_URLS = {
     },
 };
 
-const textEncoder = new TextEncoder();
-const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
+const objectStore = localforage.createInstance({ name: `SillyTavern_ChatCompletions_${TOKEN_ESTIMATOR.id}` });
 
 let tokenCache = {};
 
@@ -164,8 +163,7 @@ let tokenCache = {};
  * @returns {number} Token count.
  */
 export function guesstimate(str) {
-    const byteLength = textEncoder.encode(str).length;
-    return Math.ceil(byteLength / BYTES_PER_TOKEN);
+    return estimateText(str);
 }
 
 async function loadTokenCache() {
@@ -274,7 +272,7 @@ export function getFriendlyTokenizerName(forApi) {
 
     const tokenizerKey = Object.entries(tokenizers).find(([_, value]) => value === tokenizerId)[0].toLocaleLowerCase();
 
-    return { tokenizerName, tokenizerKey, tokenizerId };
+    return { tokenizerName: `${tokenizerName} (browser estimate)`, tokenizerKey, tokenizerId };
 }
 
 /**
@@ -383,24 +381,7 @@ function currentRemoteTokenizerAPI() {
  * @returns {number} Token count.
  */
 function callTokenizer(type, str) {
-    if (type === tokenizers.NONE) return guesstimate(str);
-
-    switch (type) {
-        case tokenizers.API_CURRENT:
-            return callTokenizer(currentRemoteTokenizerAPI(), str);
-        case tokenizers.API_KOBOLD:
-            return countTokensFromKoboldAPI(str);
-        case tokenizers.API_TEXTGENERATIONWEBUI:
-            return countTokensFromTextgenAPI(str);
-        default: {
-            const endpointUrl = TOKENIZER_URLS[type]?.count;
-            if (!endpointUrl) {
-                console.warn('Unknown tokenizer type', type);
-                return apiFailureTokenCount(str);
-            }
-            return countTokensFromServer(endpointUrl, str);
-        }
-    }
+    return estimateText(str);
 }
 
 /**
@@ -410,28 +391,7 @@ function callTokenizer(type, str) {
  * @returns {Promise<number>} Token count.
  */
 function callTokenizerAsync(type, str) {
-    return new Promise(resolve => {
-        if (type === tokenizers.NONE) {
-            return resolve(guesstimate(str));
-        }
-
-        switch (type) {
-            case tokenizers.API_CURRENT:
-                return callTokenizerAsync(currentRemoteTokenizerAPI(), str).then(resolve);
-            case tokenizers.API_KOBOLD:
-                return countTokensFromKoboldAPI(str, resolve);
-            case tokenizers.API_TEXTGENERATIONWEBUI:
-                return countTokensFromTextgenAPI(str, resolve);
-            default: {
-                const endpointUrl = TOKENIZER_URLS[type]?.count;
-                if (!endpointUrl) {
-                    console.warn('Unknown tokenizer type', type);
-                    return resolve(apiFailureTokenCount(str));
-                }
-                return countTokensFromServer(endpointUrl, str, resolve);
-            }
-        }
-    });
+    return Promise.resolve(callTokenizer(type, str));
 }
 
 /**
@@ -794,47 +754,7 @@ export function getTokenizerModel() {
  * @deprecated Use countTokensOpenAIAsync instead.
  */
 export function countTokensOpenAI(messages, full = false) {
-    const tokenizerEndpoint = `/api/tokenizers/openai/count?model=${getTokenizerModel()}`;
-    const cacheObject = getTokenCacheObject();
-
-    if (!Array.isArray(messages)) {
-        messages = [messages];
-    }
-
-    let token_count = -1;
-
-    for (const message of messages) {
-        const model = getTokenizerModel();
-
-        if (model === 'claude') {
-            full = true;
-        }
-
-        const hash = getStringHash(JSON.stringify(message));
-        const cacheKey = `${model}-${hash}`;
-        const cachedCount = cacheObject[cacheKey];
-
-        if (typeof cachedCount === 'number') {
-            token_count += cachedCount;
-        } else {
-            jQuery.ajax({
-                async: false,
-                type: 'POST', //
-                url: tokenizerEndpoint,
-                data: JSON.stringify([message]),
-                dataType: 'json',
-                contentType: 'application/json',
-                success: function (data) {
-                    token_count += Number(data.token_count);
-                    cacheObject[cacheKey] = Number(data.token_count);
-                },
-            });
-        }
-    }
-
-    if (!full) token_count -= 2;
-
-    return token_count;
+    return estimateMessages(messages, { model: getTokenizerModel(), full });
 }
 
 /**
@@ -844,46 +764,7 @@ export function countTokensOpenAI(messages, full = false) {
  * @returns {Promise<number>} Token count.
  */
 export async function countTokensOpenAIAsync(messages, full = false) {
-    const tokenizerEndpoint = `/api/tokenizers/openai/count?model=${getTokenizerModel()}`;
-    const cacheObject = getTokenCacheObject();
-
-    if (!Array.isArray(messages)) {
-        messages = [messages];
-    }
-
-    let token_count = -1;
-
-    for (const message of messages) {
-        const model = getTokenizerModel();
-
-        if (model === 'claude') {
-            full = true;
-        }
-
-        const hash = getStringHash(JSON.stringify(message));
-        const cacheKey = `${model}-${hash}`;
-        const cachedCount = cacheObject[cacheKey];
-
-        if (typeof cachedCount === 'number') {
-            token_count += cachedCount;
-        } else {
-            const data = await jQuery.ajax({
-                async: true,
-                type: 'POST', //
-                url: tokenizerEndpoint,
-                data: JSON.stringify([message]),
-                dataType: 'json',
-                contentType: 'application/json',
-            });
-
-            token_count += Number(data.token_count);
-            cacheObject[cacheKey] = Number(data.token_count);
-        }
-    }
-
-    if (!full) token_count -= 2;
-
-    return token_count;
+    return countTokensOpenAI(messages, full);
 }
 
 /**
@@ -910,72 +791,6 @@ function getTokenCacheObject() {
     return tokenCache[String(chatId)];
 }
 
-/**
- * Count tokens using the server API.
- * @param {string} endpoint API endpoint.
- * @param {string} str String to tokenize.
- * @param {function} [resolve] Promise resolve function.s
- * @returns {number} Token count.
- */
-function countTokensFromServer(endpoint, str, resolve) {
-    const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
-
-    jQuery.ajax({
-        async: isAsync,
-        type: 'POST',
-        url: endpoint,
-        data: JSON.stringify({ text: str }),
-        dataType: 'json',
-        contentType: 'application/json',
-        success: function (data) {
-            if (typeof data.count === 'number') {
-                tokenCount = data.count;
-            } else {
-                tokenCount = apiFailureTokenCount(str);
-            }
-
-            isAsync && resolve(tokenCount);
-        },
-    });
-
-    return tokenCount;
-}
-
-/**
- * Count tokens using the AI provider's API.
- * @param {string} str String to tokenize.
- * @param {function} [resolve] Promise resolve function.
- * @returns {number} Token count.
- */
-function countTokensFromKoboldAPI(str, resolve) {
-    const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
-
-    jQuery.ajax({
-        async: isAsync,
-        type: 'POST',
-        url: TOKENIZER_URLS[tokenizers.API_KOBOLD].count,
-        data: JSON.stringify({
-            text: str,
-            url: kai_settings.api_server,
-        }),
-        dataType: 'json',
-        contentType: 'application/json',
-        success: function (data) {
-            if (typeof data.count === 'number') {
-                tokenCount = data.count;
-            } else {
-                tokenCount = apiFailureTokenCount(str);
-            }
-
-            isAsync && resolve(tokenCount);
-        },
-    });
-
-    return tokenCount;
-}
-
 function getTextgenAPITokenizationParams(str) {
     return {
         text: str,
@@ -983,37 +798,6 @@ function getTextgenAPITokenizationParams(str) {
         url: getTextGenServer(),
         model: getTextGenModel(),
     };
-}
-
-/**
- * Count tokens using the AI provider's API.
- * @param {string} str String to tokenize.
- * @param {function} [resolve] Promise resolve function.
- * @returns {number} Token count.
- */
-function countTokensFromTextgenAPI(str, resolve) {
-    const isAsync = typeof resolve === 'function';
-    let tokenCount = 0;
-
-    jQuery.ajax({
-        async: isAsync,
-        type: 'POST',
-        url: TOKENIZER_URLS[tokenizers.API_TEXTGENERATIONWEBUI].count,
-        data: JSON.stringify(getTextgenAPITokenizationParams(str)),
-        dataType: 'json',
-        contentType: 'application/json',
-        success: function (data) {
-            if (typeof data.count === 'number') {
-                tokenCount = data.count;
-            } else {
-                tokenCount = apiFailureTokenCount(str);
-            }
-
-            isAsync && resolve(tokenCount);
-        },
-    });
-
-    return tokenCount;
 }
 
 function apiFailureTokenCount(str) {

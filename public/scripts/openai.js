@@ -1622,36 +1622,21 @@ export async function prepareOpenAIMessages({
  * @param {boolean?} [options.quiet=false] Suppress toast messages
  */
 export function tryParseStreamingError(response, decoded, { quiet = false } = {}) {
+    let data;
     try {
-        const data = JSON.parse(decoded);
-
-        if (!data) {
-            return;
-        }
-
-        checkQuotaError(data, { quiet });
-        checkModerationError(data, { quiet });
-
-        // these do not throw correctly (equiv to Error("[object Object]"))
-        // if trying to fix "[object Object]" displayed to users, start here
-
-        if (data.error) {
-            !quiet && toastr.error(data.error.message || response.statusText, 'Chat Completion API');
-            throw new Error(data);
-        }
-
-        if (data.message) {
-            !quiet && toastr.error(data.message, 'Chat Completion API');
-            throw new Error(data);
-        }
-
-        if (data.detail) {
-            !quiet && toastr.error(data.detail?.error?.message || response.statusText, 'Chat Completion API');
-            throw new Error(data);
-        }
+        data = JSON.parse(decoded);
     } catch {
-        // No JSON. Do nothing.
+        return;
     }
+    if (!data || typeof data !== 'object') return;
+
+    // STworks: catch malformed JSON only, not the model errors raised below.
+    checkQuotaError(data, { quiet });
+    checkModerationError(data, { quiet });
+    if (!data.error && !data.message && !data.detail) return;
+    const message = String(data.error?.message || data.message || data.detail?.error?.message || response.statusText || 'Model request failed');
+    !quiet && toastr.error(message, 'Chat Completion API');
+    throw new Error(message);
 }
 
 /**
@@ -3074,7 +3059,14 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) return;
+                if (done) {
+                    if (!signal.aborted && [chat_completion_sources.OPENAI, chat_completion_sources.CUSTOM].includes(generate_data.chat_completion_source)) {
+                        const message = 'The model stream ended before its completion marker. The reply may be incomplete.';
+                        toastr.error(message, 'Chat Completion API');
+                        throw new Error(message);
+                    }
+                    return;
+                }
                 const rawData = value.data;
                 if (rawData === '[DONE]') return;
                 tryParseStreamingError(response, rawData);
@@ -4442,11 +4434,21 @@ async function getStatusOpen() {
             cache: 'no-cache',
         });
 
-        if (!response.ok) {
-            throw new Error(response.statusText);
+        const responseData = await response.json().catch(error => {
+            if (error.name === 'AbortError') throw error;
+            return null;
+        });
+        if (!response.ok || responseData?.error) {
+            const detail = responseData?.error;
+            const code = typeof detail?.code === 'string' ? detail.code : '';
+            const message = typeof detail?.message === 'string' ? detail.message : typeof detail === 'string' ? detail : '';
+            const status = `HTTP ${response.status}${code ? ` (${code})` : ''}`;
+            throw Object.assign(new Error(message ? `${status}: ${message}` : status), { code });
         }
 
-        const responseData = await response.json();
+        if (!responseData || typeof responseData !== 'object') {
+            throw new Error(t`The model service returned an invalid status response.`);
+        }
 
         if ('data' in responseData && Array.isArray(responseData.data)) {
             saveModelList(responseData.data);
@@ -4458,10 +4460,14 @@ async function getStatusOpen() {
             setOnlineStatus(t`Status check bypassed`);
         }
     } catch (error) {
-        console.error(error);
+        if (error.name !== 'AbortError') {
+            console.error(error);
+            toastr.error(error.message || t`Failed to connect to the model API.`, t`API connection failed`, { escapeHtml: true });
 
-        if (!canBypass) {
-            setOnlineStatus('no_connection');
+            // Model-list bypass must not hide STworks security or configuration failures.
+            if (!canBypass || (error.code && error.code !== 'MODEL_UPSTREAM_ERROR')) {
+                setOnlineStatus('no_connection');
+            }
         }
     }
 

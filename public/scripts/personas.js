@@ -1,3 +1,4 @@
+import { prepareAvatarUpload } from './stworks-avatar.js';
 import {
     buildAvatarList,
     characterToEntity,
@@ -367,6 +368,7 @@ async function uploadUserAvatar(url, name) {
         formData.append('overwrite_name', name);
     }
 
+    await prepareAvatarUpload(formData);
     const response = await fetch('/api/avatars/upload', {
         method: 'POST',
         headers: getRequestHeaders({ omitContentType: true }),
@@ -400,18 +402,20 @@ async function changeUserAvatar(e) {
 
     const formData = new FormData(form);
     const dataUrl = await getBase64Async(file);
-    let url = '/api/avatars/upload';
+    const url = '/api/avatars/upload';
+    let crop;
 
     if (!power_user.never_resize_avatars) {
         const dlg = new Popup(t`Set the crop position of the avatar image`, POPUP_TYPE.CROP, '', { cropImage: dataUrl });
         const result = await dlg.show();
 
         if (!result) {
+            form.reset();
             return;
         }
 
         if (dlg.cropData !== undefined) {
-            url += `?crop=${encodeURIComponent(JSON.stringify(dlg.cropData))}`;
+            crop = dlg.cropData;
         }
     }
 
@@ -421,6 +425,13 @@ async function changeUserAvatar(e) {
         formData.set('avatar', convertedFile);
     }
 
+    try {
+        await prepareAvatarUpload(formData, crop);
+    } catch (error) {
+        toastr.error(String(error.message));
+        form.reset();
+        return;
+    }
     const response = await fetch(url, {
         method: 'POST',
         headers: getRequestHeaders({ omitContentType: true }),
@@ -2037,6 +2048,7 @@ async function uploadPersonaAvatar(avatarId, base64Data, { resizePrompt = false 
         formData.append('avatar', file);
         formData.append('overwrite_name', avatarId);
 
+        await prepareAvatarUpload(formData);
         const uploadResponse = await fetch('/api/avatars/upload', {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),

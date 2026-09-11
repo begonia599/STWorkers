@@ -1034,6 +1034,9 @@ function generateExtensionElement(name, manifest, isActive, isDisabled, isExtern
         const updateBtn = makeActionButton('btn_update', externalId, t`Update available`, 'fa-solid fa-download fa-fw');
         updateBtn.classList.add('displayNone');
         actionsDiv.appendChild(updateBtn);
+        const rollbackBtn = makeActionButton('btn_rollback', externalId, t`Restore previous extension version`, 'fa-solid fa-rotate-left fa-fw');
+        rollbackBtn.classList.add('displayNone');
+        actionsDiv.appendChild(rollbackBtn);
     }
 
     if (isExternal && hasExtensionHook(externalId, 'clean')) {
@@ -1348,6 +1351,40 @@ async function onUpdateClick() {
     icon.removeClass('fa-spin');
 }
 
+async function onRollbackClick() {
+    const extensionName = $(this).data('name');
+    const confirmed = await Popup.show.confirm(t`Restore previous extension version?`, escapeHtml(extensionName));
+    if (!confirmed) return;
+    this.disabled = true;
+    try {
+        const response = await fetch('/api/extensions/rollback', {
+            method: 'POST', headers: getRequestHeaders(),
+            body: JSON.stringify({ extensionName, global: getExtensionType(extensionName) === 'global' }),
+        });
+        if (!response.ok) {
+            toastr.error(await extensionErrorText(response), t`Extension rollback failed`);
+            return;
+        }
+        toastr.success(t`Previous extension version restored.`, t`Reload the page to apply updates`);
+        await saveSettings();
+        location.reload();
+    } catch {
+        toastr.error(t`Could not restore the previous extension version.`);
+    } finally {
+        this.disabled = false;
+    }
+}
+
+async function extensionErrorText(response) {
+    const text = await response.text();
+    try {
+        const data = JSON.parse(text);
+        return escapeHtml(typeof data.error?.message === 'string' ? data.error.message : text);
+    } catch {
+        return escapeHtml(text || response.statusText);
+    }
+}
+
 /**
  * Updates a third-party extension via the API.
  * @param {string} extensionName Extension folder name
@@ -1368,7 +1405,7 @@ async function updateExtension(extensionName, quiet, timeout = null) {
         });
 
         if (!response.ok) {
-            const text = await response.text();
+            const text = await extensionErrorText(response);
             toastr.error(text || response.statusText, t`Extension update failed`, { timeOut: 5000 });
             console.error('Extension update failed', response.status, response.statusText, text);
             return;
@@ -1539,7 +1576,7 @@ async function moveExtension(extensionName, source, destination) {
         });
 
         if (!result.ok) {
-            const text = await result.text();
+            const text = await extensionErrorText(result);
             toastr.error(text || result.statusText, t`Extension move failed`, { timeOut: 5000 });
             console.error('Extension move failed', result.status, result.statusText, text);
             return;
@@ -1568,7 +1605,7 @@ export async function deleteExtension(extensionName, shouldClean = false) {
     await callExtensionHook(fullExtensionName, 'delete');
 
     try {
-        await fetch('/api/extensions/delete', {
+        const response = await fetch('/api/extensions/delete', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({
@@ -1576,8 +1613,14 @@ export async function deleteExtension(extensionName, shouldClean = false) {
                 global: getExtensionType(extensionName) === 'global',
             }),
         });
+        if (!response.ok) {
+            toastr.error(await extensionErrorText(response), t`Extension deletion failed`);
+            return;
+        }
     } catch (error) {
         console.error('Error:', error);
+        toastr.error(t`Extension deletion failed`);
+        return;
     }
 
     // Delete or clean might have updated settings, which could race with the page reload, so we'll force save here
@@ -1608,8 +1651,11 @@ async function getExtensionVersion(extensionName, abortSignal) {
             signal: abortSignal,
         });
 
-        const data = await response.json();
-        return data;
+        if (!response.ok) {
+            console.warn('Extension version check failed', response.status);
+            return;
+        }
+        return await response.json();
     } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
             return;
@@ -1641,7 +1687,7 @@ async function getExtensionBranches(extensionName, isGlobal) {
         });
 
         if (!response.ok) {
-            const text = await response.text();
+            const text = await extensionErrorText(response);
             toastr.error(text || response.statusText, t`Extension branches fetch failed`);
             console.error('Extension branches fetch failed', response.status, response.statusText, text);
             return [];
@@ -1674,7 +1720,7 @@ async function switchExtensionBranch(extensionName, isGlobal, branch) {
         });
 
         if (!response.ok) {
-            const text = await response.text();
+            const text = await extensionErrorText(response);
             toastr.error(text || response.statusText, t`Extension branch switch failed`);
             console.error('Extension branch switch failed', response.status, response.statusText, text);
             return;
@@ -1754,7 +1800,7 @@ export async function installExtension(url, global, branch = '') {
     });
 
     if (!request.ok) {
-        const text = await request.text();
+        const text = await extensionErrorText(request);
         toastr.warning(text || request.statusText, t`Extension installation failed`, { timeOut: 5000 });
         console.error('Extension installation failed', request.status, request.statusText, text);
         return false;
@@ -1857,6 +1903,8 @@ async function checkForUpdatesManual(sortFn, abortSignal) {
                 const selector = getNameSelector(externalId, { prefix: '' });
                 const extensionBlock = document.querySelector(`.extension_block[data-name="${selector}"]`);
                 if (extensionBlock && data) {
+                    extensionBlock.querySelector('.btn_rollback')?.classList.toggle('displayNone', data.canRollback !== true);
+                    if (data.canMove === false) extensionBlock.querySelector('.btn_move')?.classList.add('displayNone');
                     if (data.isUpToDate === false) {
                         const buttonElement = extensionBlock.querySelector('.btn_update');
                         if (buttonElement) {
@@ -2301,6 +2349,7 @@ export async function initExtensions() {
     $(document).on('click', '.extensions_info .extension_block .toggle_disable', onDisableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .toggle_enable', onEnableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick);
+    $(document).on('click', '.extensions_info .extension_block .btn_rollback', onRollbackClick);
     $(document).on('click', '.extensions_info .extension_block .btn_delete', onDeleteClick);
     $(document).on('click', '.extensions_info .extension_block .btn_clean', onCleanClick);
     $(document).on('click', '.extensions_info .extension_block .btn_move', onMoveClick);

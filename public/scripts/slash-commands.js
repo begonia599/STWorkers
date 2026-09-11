@@ -1,4 +1,5 @@
 import { Fuse, DOMPurify } from '../lib.js';
+import { prepareAvatarUpload } from './stworks-avatar.js';
 import { canUseNegativeLookbehind, copyText, findPersona, flashHighlight, resolveAvatarData } from './utils.js';
 
 import {
@@ -5154,6 +5155,7 @@ async function uploadCharacterAvatar(avatarKey, base64Data, { resizePrompt = fal
         formData.append('avatar', blob, 'avatar.png');
         formData.append('avatar_url', avatarKey);
 
+        await prepareAvatarUpload(formData);
         const uploadResponse = await fetch('/api/characters/edit-avatar', {
             method: 'POST',
             headers: getRequestHeaders({ omitContentType: true }),

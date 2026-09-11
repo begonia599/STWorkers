@@ -1,0 +1,28 @@
+{
+  "name": "stworks-worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:local": "node scripts/smoke-local.mjs",
+    "test:storage-local": "node scripts/smoke-storage.mjs",
+    "setup:local": "node scripts/setup-local.mjs",
+    "setup:cloud": "node scripts/setup-cloud.mjs",
+    "check:cloud": "node scripts/check-cloud.mjs",
+    "db:local": "wrangler d1 migrations apply DB --local",
+    "build:assets": "node scripts/build-assets.mjs",
+    "build": "npm run build:assets && wrangler deploy --dry-run --outdir .build/worker",
+    "dev": "wrangler dev --local --ip 127.0.0.1 --port 8788"
+  },
+  "dependencies": {
+    "sillytavern": "file:..",
+    "yaml": "2.8.3"
+  },
+  "devDependencies": {
+    "wrangler": "4.129.1"
+  }
+}
