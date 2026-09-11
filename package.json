@@ -111,6 +111,19 @@
     "name": "sillytavern",
     "type": "module",
     "license": "AGPL-3.0",
+    "cloudflare": {
+        "bindings": {
+            "AUTH_PASSWORD": {
+                "description": "Choose a unique access password of at least 24 characters. Login name: owner. This is NOT your model API key. Keep the password private."
+            },
+            "DB": {
+                "description": "Private settings, character cards, chat indexes and encrypted model credentials. Create a new database for a new installation."
+            },
+            "FILES": {
+                "description": "Private character images, chat files and plugin archives. Keep public access disabled. R2 account activation may be required."
+            }
+        }
+    },
     "repository": {
         "type": "git",
         "url": "https://github.com/SillyTavern/SillyTavern.git"
@@ -119,7 +132,9 @@
     "scripts": {
         "init": "node src/server-init.js",
         "start": "npm --prefix cloudflare run dev",
-        "build": "npm --prefix cloudflare run build",
+        "build": "node cloudflare/scripts/build-entry.mjs",
+        "build:cloud": "node cloudflare/scripts/build-entry.mjs --cloud",
+        "deploy": "node cloudflare/scripts/native-cloud.mjs deploy",
         "test": "npm --prefix cloudflare test",
         "start:upstream": "node server.js",
         "debug": "node --inspect server.js",

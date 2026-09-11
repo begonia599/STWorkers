@@ -65,7 +65,18 @@ async function summary(env, text) {
     if (env.GITHUB_ACTIONS === 'true' && env.GITHUB_STEP_SUMMARY) await appendFile(env.GITHUB_STEP_SUMMARY, text + '\n');
 }
 
-export async function buildActionsRelease(workerRoot, env, { fetchImpl = fetch, run = runNode } = {}) {
+export function mergePluginHistory(specs, sourceLock, previousLock = sourceLock) {
+    validatePluginLock(sourceLock);
+    validatePluginLock(previousLock);
+    const matches = (item, spec) => item.repository.toLowerCase() === spec.repository.toLowerCase() && item.ref === spec.ref;
+    return validatePluginLock({ schema: 1, plugins: specs.flatMap(spec => {
+        const item = sourceLock.plugins.find(item => matches(item, spec))
+            ?? previousLock.plugins.find(item => matches(item, spec));
+        return item ? [item] : [];
+    }) });
+}
+
+export async function buildActionsRelease(workerRoot, env, { fetchImpl = fetch, run = runNode, previousPluginLock } = {}) {
     // The build path never needs a deployment credential.
     assert.ok(!env.CLOUDFLARE_API_TOKEN && !env.AUTH_PASSWORD && !env.DATA_KEY && !env.GITHUB_TOKEN && !env.GH_TOKEN,
         'Do not provide deployment credentials to the build step.');
@@ -77,7 +88,7 @@ export async function buildActionsRelease(workerRoot, env, { fetchImpl = fetch, 
     const output = await generatedDirectory(root, path.join('.build', 'actions'));
     await writeGeneratedJson(path.join(output, 'release.json'), { schema: 1, validation: 'build-incomplete' });
     const inputs = await readPluginInputs(path.join(root, '..'));
-    const selection = await preparePluginSelection(inputs.text, inputs.lock, {
+    const selection = await preparePluginSelection(inputs.text, mergePluginHistory(inputs.specs, inputs.lock, previousPluginLock), {
         update: env.STWORKERS_UPDATE_PLUGINS === 'true', fetchImpl,
     });
     const input = await mkdtemp(path.join(build, 'actions-input-'));
@@ -99,7 +110,7 @@ export async function buildActionsRelease(workerRoot, env, { fetchImpl = fetch, 
         manifestSha256: digest(await readFile(path.join(build, 'build-manifest-p3.json'))),
         inputListSha256: digest(Buffer.from(inputs.text)),
         inputLockSha256: digest(Buffer.from(JSON.stringify(inputs.lock))),
-        pluginLockSha256: digest(Buffer.from(JSON.stringify(selection.lock))), lockChanged: selection.changed,
+        pluginLockSha256: digest(Buffer.from(JSON.stringify(selection.lock))), lockChanged: !isDeepStrictEqual(selection.lock, inputs.lock),
         plugins: assets.plugins, files: assets.files, bytes: assets.bytes,
         validation: 'local-build-and-dry-run-only', cloudVerified: false };
     await writeGeneratedJson(path.join(output, 'release.json'), receipt);

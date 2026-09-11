@@ -1,9 +1,14 @@
 # GitHub Actions 预装发布
 
-更新日期：2026-09-11。
-当前优先路线是用 GitHub Actions 接替开发电脑完成“准备插件、打包、部署”。
+更新日期：2026-09-12（北京时间）。
+GitHub Actions 用于接替开发电脑完成“准备插件、打包、部署”。
 不是在网页点击安装后启动一个后台任务，也不是让 Worker 继续解压 Actions 下载的 ZIP。
 在线安装后端的性能优化留到后续细化；已有在线安装功能不删除，也不据此标记免费资源门槛通过。
+
+另有复用本打包逻辑的 [Workers Builds 原生首次入口](NATIVE-DEPLOY.md)，现已完成本地原型验证，
+真实首次授权/资源预配/云端部署尚未测试。它不要求向 GitHub 复制 Cloudflare Token，
+但平台自动 Token 权限仍需实测，不能据此称为已验收的免配置入口。
+原生入口不改变本 Actions 工作流的默认 dry-run、已有实例前提或凭据要求。
 
 ## 当前范围
 
@@ -14,7 +19,8 @@
 - 输出到 `cloudflare/.build/assets-p3`，运行路径仍为原版 `scripts/extensions/third-party/`。
 - 默认只构建和 dry-run；显式勾选后才更新一个已经初始化的个人实例。
 - 本轮不自动开通账号、创建 Worker/D1/R2、执行数据库迁移或初始化密钥。
-  从零部署仍需先走 `CLOUD-TEST.md`；完整的一键首次初始化属于尚未完成的 P5。
+  已有手动首次测试流程见 `CLOUD-TEST.md`，新原生入口见 `NATIVE-DEPLOY.md`；
+  完整的一键首次初始化仍属于未验收的 P5。
 - 新增工作流不会发布 npm、Docker、GitHub Release 或上传插件资源 artifact。
   原 ST 的十个工作流已移到 `.github/upstream-workflows/` 仅作参考，
   不参与本仓库 push、定时、Issue、PR 或发布事件。当前仅激活本手动工作流。
@@ -73,8 +79,8 @@ checkout 不持久化凭据，插件下载与打包步骤不注入该 Token。
 上限为 32 个条目、每包 25 MiB、所选压缩归档合计 128 MiB，最终资源另受资产检查约束。
 首次新增或更新时的哈希是完整性锁定，不是对插件安全性或许可的审核结论。
 
-“首次授权后免手填 Cloudflare Token”的部署入口、自动创建资源和初始化密钥仍属于未完成的 P5；
-当前 Actions 直接部署现有实例仍使用下节的 Cloudflare Secret。
+“首次授权后免手填 Cloudflare Token”的原生入口已实现本地原型，尚未验证平台自动创建资源和首次部署；
+当前 Actions 直接部署现有实例仍使用下节的 Cloudflare Secret。两种入口不要同时向同一实例触发部署。
 
 ## 使用入口
 

@@ -54,6 +54,12 @@ public/scripts/extensions/third-party
 /certs
 .aider*
 .env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
 /StartDev.bat
 yarn.lock
 *.code-workspace

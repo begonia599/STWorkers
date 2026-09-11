@@ -1,0 +1,5 @@
+# Enter your own unique access password in the Cloudflare deployment setup.
+# At least 24 characters. Never use a model API key as this password.
+AUTH_PASSWORD=
+# DATA_KEY is initialized independently by the guarded deployment script.
+# Never put a real password, API token, or encryption key in this example file.
