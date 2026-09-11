@@ -144,7 +144,7 @@ export async function prepareCloud(workerRoot, options = {}) {
     return { created: true, directory, name };
 }
 
-export async function checkAssets(root, config, secrets = {}) {
+export async function checkAssets(root, config, secrets = {}, selectedPlugins = null) {
     const plugins = config.assets.directory === '../../.build/assets-p3';
     const build = path.join(root, '.build');
     requireValue(await realpath(build) === build, 'Refusing a linked build directory.');
@@ -152,7 +152,7 @@ export async function checkAssets(root, config, secrets = {}) {
     requireValue(await realpath(assets) === assets, 'Refusing a linked assets directory.');
     const manifest = await readJson(path.join(build, plugins ? 'build-manifest-p3.json' : 'build-manifest.json'));
     const bootstrap = await readJson(path.join(assets, '__stworks', 'bootstrap.json'), 4 * 1024 * 1024);
-    const expectedCount = plugins ? 2 : 0;
+    const expectedCount = plugins ? (selectedPlugins?.length ?? 2) : 0;
     requireValue(Array.isArray(manifest.extensionsBundled) && manifest.extensionsBundled.length === expectedCount,
         'Build the selected default or explicit P3 assets before this check.');
     const discovered = bootstrap.stworks?.extensions?.map(extension => extension.name);
@@ -160,11 +160,15 @@ export async function checkAssets(root, config, secrets = {}) {
         && discovered?.length === 2 + expectedCount && discovered.includes('regex') && discovered.includes('quick-reply'),
     'Asset discovery does not match the selected build manifest.');
     if (plugins) {
-        const lock = await readJson(path.join(root, '..', 'upstream-lock.json'));
-        for (const locked of lock.extensions) {
+        const selected = selectedPlugins ?? (await readJson(path.join(root, '..', 'upstream-lock.json'))).extensions;
+        requireValue(new Set(selected.map(plugin => plugin.id.toLowerCase())).size === selected.length
+            && new Set(manifest.extensionsBundled.map(plugin => plugin.name.toLowerCase())).size === selected.length,
+        'Duplicate pinned plugin folders in selected assets.');
+        for (const locked of selected) {
             requireValue(manifest.extensionsBundled.some(plugin => locked.commit === plugin.commit
-                && plugin.name === `third-party/${locked.id}` && discovered.includes(plugin.name)),
-                'P3 assets must use the pinned plugin commits.');
+                && plugin.name === `third-party/${locked.id}` && discovered.includes(plugin.name)
+                && (selectedPlugins === null || locked.version === plugin.version)),
+                'Bundled assets must match the selected pinned plugin lock.');
         }
     }
     let files = 0;

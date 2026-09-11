@@ -24,20 +24,30 @@ async function bundledSnapshot(request, env, name) {
     const item = (await bundled(request, env)).find(entry => entry.name.toLowerCase() === `third-party/${name}`.toLowerCase());
     if (!item) return null;
     const folder = item.name.slice('third-party/'.length);
-    const remoteUrl = BUNDLED_SOURCES[folder];
+    const remoteUrl = item.remoteUrl ?? BUNDLED_SOURCES[folder];
     if (!remoteUrl || !/^[a-f0-9]{40}$/.test(item.commit ?? '')) {
         throw new HttpError(422, 'UNMANAGED_BUNDLED_EXTENSION', 'This bundled extension has no verified repository metadata.');
     }
+    const source = repositoryUrl(remoteUrl);
+    if (source.name.toLowerCase() !== folder.toLowerCase()) {
+        throw new HttpError(422, 'UNMANAGED_BUNDLED_EXTENSION', 'The bundled repository and folder differ.');
+    }
     const response = await env.ASSETS.fetch(new Request(new URL(`${assetPath(folder)}manifest.json`, request.url)));
     if (!response.ok) throw new HttpError(503, 'BUNDLED_EXTENSION_MISSING', 'The bundled extension manifest is unavailable.');
-    return { kind: 'bundled', remoteUrl, commit: item.commit, ref: '', refKind: 'bundled',
+    return { kind: 'bundled', remoteUrl: source.url, commit: item.commit, ref: repositoryRef(item.ref ?? ''), refKind: 'bundled',
         folder, manifest: await response.json() };
 }
 
 async function stateFor(request, env, scope, name) {
     const store = new Documents(env.DB);
     const row = await store.get(KIND, identity(scope, name));
-    if (row) return row;
+    if (row) {
+        // A bundled pointer follows the current deployment; archive installs and uninstall tombstones do not.
+        if (row.value.current?.kind === 'bundled' && scope === 'local') {
+            return { ...row, value: { ...row.value, current: await bundledSnapshot(request, env, name) } };
+        }
+        return row;
+    }
     const snapshot = scope === 'local' ? await bundledSnapshot(request, env, name) : null;
     return { revision: 0, value: { name: snapshot?.folder ?? name, scope, current: snapshot, previous: null, garbage: [] } };
 }
@@ -52,6 +62,7 @@ export async function discoverExtensions(request, env) {
     for (const { value } of rows) {
         const name = `third-party/${value.name}`;
         const target = value.scope === 'global' ? global : local;
+        if (value.scope === 'local' && value.current?.kind === 'bundled') continue;
         if (!value.current) target.delete(name.toLowerCase());
         else target.set(name.toLowerCase(), { name, type: value.scope, commit: value.current.commit,
             version: value.current.manifest.version });
@@ -205,7 +216,9 @@ export async function extensionAsset(request, env, pathname) {
     const store = new Documents(env.DB);
     const local = await store.get(KIND, identity('local', name));
     const global = await store.get(KIND, identity('global', name));
-    const snapshot = local?.value.current
+    const localCurrent = local?.value.current?.kind === 'bundled'
+        ? await bundledSnapshot(request, env, name) : local?.value.current;
+    const snapshot = localCurrent
         ?? (local === null ? await bundledSnapshot(request, env, name) : null)
         ?? global?.value.current;
     if (!snapshot) return new Response('Not found', { status: 404 });

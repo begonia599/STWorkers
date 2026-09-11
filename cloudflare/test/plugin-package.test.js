@@ -63,3 +63,15 @@ test('verified archives reject Unix symlinks rather than following their target'
     });
     await assert.rejects(readPinnedArchive(archive.bytes, archive.baseline), /symlinks/);
 });
+
+test('a newly locked ZIP with an inconsistent entry CRC is rejected after inflation', async () => {
+    const archive = syntheticArchive({ 'fixture-commit/dist/index.js': Buffer.from('synthetic') });
+    for (let offset = 0; offset < archive.bytes.length - 46; offset++) {
+        if (archive.bytes.readUInt32LE(offset) === 0x02014b50) {
+            archive.bytes[offset + 16] ^= 1;
+            break;
+        }
+    }
+    archive.baseline.sha256 = digest(archive.bytes);
+    await assert.rejects(readPinnedArchive(archive.bytes, archive.baseline), /resource checksum differs/);
+});

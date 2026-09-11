@@ -14,6 +14,7 @@ const env = {
     STWORKERS_D1_DATABASE_ID: '12345678-1234-4321-8123-123456789abc',
     GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
     STWORKERS_DEFAULT_BRANCH: 'main', STWORKERS_DEPLOY: 'true', CLOUDFLARE_API_TOKEN: 'synthetic-token-never-log-this-value',
+    GITHUB_SHA: 'a'.repeat(40), GITHUB_REPOSITORY: 'example/STWorkers',
 };
 const config = () => actionsConfig(base, env, true);
 const json = (file, value) => writeFile(file, JSON.stringify(value));
@@ -56,6 +57,11 @@ async function fixture(t) {
     await mkdir(path.join(assets, '__stworks'), { recursive: true });
     await json(path.join(root, 'wrangler.jsonc'), base);
     await json(path.join(parent, 'upstream-lock.json'), { extensions: PLUGIN_BASELINES });
+    const lock = { schema: 1, plugins: PLUGIN_BASELINES.map(plugin => ({ ...plugin, ref: 'HEAD', layout: 'legacy' })) };
+    const list = lock.plugins.map(plugin => `https://github.com/${plugin.repository}`).join('\n');
+    await json(path.join(parent, 'plugins.lock.json'), lock);
+    await writeFile(path.join(parent, 'plugins.txt'), list);
+    await json(path.join(output, 'plugins.lock.json'), lock);
     const bundled = PLUGIN_BASELINES.map(plugin => ({ name: `third-party/${plugin.id}`, commit: plugin.commit, version: plugin.version }));
     const discovered = ['regex', 'quick-reply', ...bundled.map(plugin => plugin.name)];
     const bootstrap = JSON.stringify({ stworks: { extensions: discovered.map(name => ({ name })) } });
@@ -67,11 +73,17 @@ async function fixture(t) {
     await json(path.join(output, 'wrangler.json'), config());
     await json(path.join(output, 'release.json'), { schema: 1, validation: 'local-build-and-dry-run-only',
         configSha256: digest(Buffer.from(JSON.stringify(config()))),
-        manifestSha256: digest(Buffer.from(JSON.stringify(manifest))) });
+        manifestSha256: digest(Buffer.from(JSON.stringify(manifest))),
+        inputListSha256: digest(Buffer.from(list)), inputLockSha256: digest(Buffer.from(JSON.stringify(lock))),
+        pluginLockSha256: digest(Buffer.from(JSON.stringify(lock))), lockChanged: false });
+    await json(path.join(output, 'lock-saved.json'), { schema: 1,
+        repository: env.GITHUB_REPOSITORY, ref: env.GITHUB_REF,
+        sourceRevision: env.GITHUB_SHA, savedRevision: env.GITHUB_SHA,
+        pluginLockSha256: digest(Buffer.from(JSON.stringify(lock))) });
     return { root, output, assets };
 }
 
-test('Actions config always prebundles both plugins and never contains credentials or deployment hooks', () => {
+test('Actions config uses explicit selected assets without credentials or deployment hooks', () => {
     const draft = actionsConfig(base, {});
     assert.equal(draft.name, 'stworkers');
     assert.equal(draft.assets.directory, '../../.build/assets-p3');
@@ -105,9 +117,9 @@ test('plugin fetching is pinned, credential-free and fails closed for changed ar
         return new Response('not-the-reviewed-archive');
     } }), /checksum verification failed/);
     assert.equal(calls, 1);
-    await assert.rejects(fetchPinnedPlugin({ ...plugin, repository: 'unreviewed/repo' }, {
+    await assert.rejects(fetchPinnedPlugin({ ...plugin, repository: '../escape' }, {
         fetchImpl: () => { throw new Error('Must never fetch'); },
-    }), /reviewed/);
+    }));
 });
 
 test('plugin redirects, HTTP errors, oversized headers and network details never enter CI logs', async () => {
@@ -131,7 +143,7 @@ test('streamed plugin downloads enforce the byte limit without trusting Content-
 });
 
 test('build rejects deployment credentials before filesystem access or downloads', async () => {
-    for (const secret of ['CLOUDFLARE_API_TOKEN', 'AUTH_PASSWORD', 'DATA_KEY']) {
+    for (const secret of ['CLOUDFLARE_API_TOKEN', 'AUTH_PASSWORD', 'DATA_KEY', 'GITHUB_TOKEN', 'GH_TOKEN']) {
         await assert.rejects(buildActionsRelease('nonexistent', { [secret]: 'sensitive' }), /Do not provide deployment credentials/);
     }
 });
@@ -237,14 +249,17 @@ test('post-deployment network failure reports that deployment already ran, not t
     assert.equal(deployed, true);
 });
 
-test('workflow is manual, default-dry-run, SHA-pinned, read-only and has no artifact publishing', async () => {
+test('workflow is manual, default-dry-run, SHA-pinned and saves only lock metadata before optional deployment', async () => {
     const workflow = parse(await readFile(new URL('../../.github/workflows/stworkers-deploy.yml', import.meta.url), 'utf8'));
     assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
     assert.equal(workflow.on.workflow_dispatch.inputs.deploy.default, false);
     assert.equal(workflow.on.workflow_dispatch.inputs.deploy.type, 'boolean');
+    assert.equal(workflow.on.workflow_dispatch.inputs.update_plugins.default, false);
+    assert.equal(workflow.on.workflow_dispatch.inputs.update_plugins.type, 'boolean');
     assert.deepEqual(workflow.permissions, { contents: 'read' });
     assert.equal(workflow.concurrency['cancel-in-progress'], false);
     const job = workflow.jobs['prepare-and-deploy'];
+    assert.deepEqual(job.permissions, { contents: 'write' });
     assert.equal(job.env.CLOUDFLARE_API_TOKEN, undefined);
     const steps = job.steps;
     for (const step of steps.filter(step => step.uses)) assert.match(step.uses, /^actions\/(?:checkout|setup-node)@[a-f0-9]{40}$/);
@@ -256,6 +271,24 @@ test('workflow is manual, default-dry-run, SHA-pinned, read-only and has no arti
     assert.equal(secretSteps[0].run, 'node cloudflare/scripts/github-actions.mjs deploy');
     assert.equal(secretSteps[0].if, '${{ inputs.deploy }}');
     assert.equal(steps.filter(step => step.run?.includes('github-actions.mjs build')).length, 1);
+    const save = steps.find(step => step.run?.endsWith('github-actions.mjs save-lock'));
+    assert.equal(save.env.GITHUB_TOKEN, '${{ github.token }}');
+    assert.equal(save.if, "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}");
+    assert.ok(steps.indexOf(save) > steps.findIndex(step => step.run?.endsWith('github-actions.mjs build')));
+    assert.ok(steps.indexOf(save) < steps.findIndex(step => step.run?.endsWith('github-actions.mjs deploy')));
+    assert.equal(steps.filter(step => step.env?.GITHUB_TOKEN).length, 1);
+    assert.equal(job.env.GITHUB_TOKEN, undefined);
+});
+
+test('deployment rejects changed plugin inputs or a missing lock-save receipt before cloud access', async t => {
+    const { root, output } = await fixture(t);
+    const never = { fetchImpl: () => assert.fail('Must not contact Cloudflare'), run: () => assert.fail('Must not deploy') };
+    const list = path.join(root, '..', 'plugins.txt'), previous = await readFile(list, 'utf8');
+    await writeFile(list, previous + '\n# changed after building');
+    await assert.rejects(deployActionsRelease(root, env, never), /unchanged plugin inputs/);
+    await writeFile(list, previous);
+    await rm(path.join(output, 'lock-saved.json'));
+    await assert.rejects(deployActionsRelease(root, env, never), { code: 'ENOENT' });
 });
 
 test('only the reviewed STWorkers workflow is active; upstream automation is preserved outside workflows', async () => {

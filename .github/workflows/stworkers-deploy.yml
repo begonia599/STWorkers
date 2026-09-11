@@ -8,6 +8,11 @@ on:
         type: boolean
         required: true
         default: false
+      update_plugins:
+        description: Update existing plugins to their selected branch or tag (otherwise keep locked versions)
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -18,6 +23,8 @@ concurrency:
 
 jobs:
   prepare-and-deploy:
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -49,7 +56,15 @@ jobs:
       - name: Run contract and safety tests
         run: npm --prefix cloudflare test
       - name: Download pinned plugins, package original assets, and dry-run
+        env:
+          STWORKERS_UPDATE_PLUGINS: ${{ inputs.update_plugins }}
         run: node cloudflare/scripts/github-actions.mjs build
+      - name: Save the generated plugin lock on the default branch
+        if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        env:
+          STWORKERS_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node cloudflare/scripts/github-actions.mjs save-lock
       - name: Verify bindings and update the existing instance
         if: ${{ inputs.deploy }}
         env:

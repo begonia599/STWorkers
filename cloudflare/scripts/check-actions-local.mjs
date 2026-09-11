@@ -1,20 +1,24 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import wrangler from 'wrangler';
 import { lookup } from 'mime-types';
-import { digest, PLUGIN_BASELINES, readPinnedArchive } from './plugin-package.mjs';
+import { zipSync } from 'fflate';
+import { copyPluginBundle, digest, packagePlugins, PLUGIN_BASELINES, readPinnedArchive } from './plugin-package.mjs';
+import { preparePluginSelection } from './plugin-list.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const assets = path.join(root, '.build', 'assets-p3');
+let assets = path.join(root, '.build', 'assets-p3');
 const output = path.join(root, '.build', 'actions-check', randomUUID());
 const require = createRequire(process.argv[2] ?? new URL('../package.json', import.meta.url));
 const { chromium } = require('playwright');
 const password = randomBytes(36).toString('base64url');
+const withFixture = process.argv[4] === '--with-list-fixture';
+const selected = [...PLUGIN_BASELINES];
 const headers = { Authorization: `Basic ${Buffer.from(`owner:${password}`).toString('base64')}` };
 const evidence = { scope: 'Local Actions build output in isolated workerd/D1/R2. Not a GitHub-hosted or cloud deployment test.',
     startedAt: new Date().toISOString(), checks: [], workerOutbound: [], pageErrors: [], httpErrors: [],
@@ -23,6 +27,42 @@ let runtime, browser, base;
 await mkdir(output, { recursive: true });
 
 try {
+    if (withFixture) {
+        const commit = 'a'.repeat(40), id = 'list-fixture', repository = `example/${id}`;
+        const source = {
+            'manifest.json': JSON.stringify({ display_name: 'Synthetic List Fixture', version: '1',
+                js: 'index.js', css: 'style.css', loading_order: 100, requires: [], optional: [] }),
+            'index.js': 'import { value } from "./nested/value.js";\n'
+                + 'const text = await (await fetch(new URL("./templates/panel.html", import.meta.url))).text();\n'
+                + 'window.STWorkersListFixture = { value, text };\n',
+            'nested/value.js': 'export const value = "loaded-from-list";',
+            'templates/panel.html': '<span>synthetic-template</span>',
+            'style.css': ':root { --stworkers-list-fixture: 1; }',
+            'LICENSE': 'Synthetic test fixture; no external plugin source.',
+        };
+        const bytes = zipSync(Object.fromEntries(Object.entries(source).map(([name, value]) =>
+            [`${id}-${commit}/${name}`, Buffer.from(value)])), { mtime: new Date('2020-01-01T00:00:00Z') });
+        const prepared = await preparePluginSelection(`https://github.com/${repository}#${commit}`,
+            { schema: 1, plugins: [] }, { fetchImpl: async url => {
+                assert.equal(url, `https://codeload.github.com/${repository}/zip/${commit}`);
+                return new Response(bytes);
+            } });
+        assert.equal(await realpath(output), output);
+        const isolated = path.join(output, 'assets');
+        await cp(assets, isolated, { recursive: true, errorOnExist: true, force: false });
+        assets = isolated;
+        const plugin = prepared.lock.plugins[0];
+        await writeFile(path.join(output, plugin.archive), prepared.archives.get(id), { flag: 'wx' });
+        const bundle = path.join(output, 'bundle');
+        await packagePlugins(output, bundle, null, prepared.lock.plugins);
+        const copied = await copyPluginBundle(path.join(bundle, 'bundle.json'), assets);
+        const bootstrapFile = path.join(assets, '__stworks', 'bootstrap.json');
+        const bootstrap = JSON.parse(await readFile(bootstrapFile, 'utf8'));
+        bootstrap.stworks.extensions.push(...copied.plugins);
+        await writeFile(bootstrapFile, JSON.stringify(bootstrap));
+        selected.push(plugin);
+        evidence.checks.push('Synthetic third plugin prepared from a list URL in an isolated copy; production list, lock and assets unchanged');
+    }
     const scriptPath = path.join(root, '.build', 'actions', 'worker', 'index.js');
     evidence.workerSha256 = digest(await readFile(scriptPath));
     runtime = new Miniflare(convertV4MiniflareOptions({
@@ -52,7 +92,7 @@ try {
     base = (await runtime.ready).origin;
     assert.equal((await fetch(base)).status, 401);
     const discovered = await (await fetch(base + '/api/extensions/discover', { headers })).json();
-    for (const plugin of PLUGIN_BASELINES) {
+    for (const plugin of selected) {
         const prefix = `/scripts/extensions/third-party/${plugin.id}/`;
         assert.ok(discovered.some(item => item.name === `third-party/${plugin.id}` && item.commit === plugin.commit));
         const source = await readFile(path.join(assets, prefix, '__source.zip'));
@@ -86,6 +126,14 @@ try {
         await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 90000 });
         await page.waitForFunction(() => window.TavernHelper && window.EjsTemplate
             && window.SillyTavern?.getContext && !document.querySelector('.splash-screen'), null, { timeout: 90000 });
+        if (withFixture) {
+            await page.waitForFunction(() => window.STWorkersListFixture, null, { timeout: 30000 });
+            assert.deepEqual(await page.evaluate(() => window.STWorkersListFixture),
+                { value: 'loaded-from-list', text: '<span>synthetic-template</span>' });
+            assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement)
+                .getPropertyValue('--stworkers-list-fixture').trim()), '1');
+            evidence.checks.push(`${mobile ? 'Mobile' : 'Desktop'}: third-plugin root module, nested import, HTML template and CSS loaded`);
+        }
         if (!mobile) {
             await page.getByText('Welcome to SillyTavern!', { exact: true }).waitFor();
             await page.locator('dialog[open]').last().locator('.popup-button-ok').click();

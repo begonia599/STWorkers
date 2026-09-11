@@ -1,0 +1,5 @@
+# One public GitHub plugin repository per line. Blank lines and comments are ignored.
+# Add #branch, #tag or #commit to select a ref; otherwise the default branch is used.
+# Existing versions stay locked unless "update_plugins" is selected in Actions.
+https://github.com/N0VI028/JS-Slash-Runner
+https://github.com/zonde306/ST-Prompt-Template

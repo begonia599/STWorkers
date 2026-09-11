@@ -2,8 +2,8 @@ import { fileURLToPath } from 'node:url';
 
 try {
     const action = process.argv[2];
-    if (process.argv.length !== 3 || !['guard', 'build', 'deploy'].includes(action)) {
-        throw new Error('Usage: node cloudflare/scripts/github-actions.mjs <guard|build|deploy>');
+    if (process.argv.length !== 3 || !['guard', 'build', 'save-lock', 'deploy'].includes(action)) {
+        throw new Error('Usage: node cloudflare/scripts/github-actions.mjs <guard|build|save-lock|deploy>');
     }
     // The early selection guard must work before npm dependencies are installed.
     if (action === 'guard') {
@@ -16,7 +16,10 @@ try {
     } else {
         const { buildActionsRelease, deployActionsRelease } = await import('./actions-release.mjs');
         const root = fileURLToPath(new URL('../', import.meta.url));
-        await (action === 'build' ? buildActionsRelease : deployActionsRelease)(root, process.env);
+        if (action === 'save-lock') {
+            const { savePluginLock } = await import('./plugin-lock-github.mjs');
+            await savePluginLock(root, process.env);
+        } else await (action === 'build' ? buildActionsRelease : deployActionsRelease)(root, process.env);
     }
 } catch (error) {
     // Child-process and assertion errors can contain arbitrary values. Keep CLI failure output generic.

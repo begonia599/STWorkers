@@ -69,6 +69,74 @@ const assertError = async (response, status, code) => {
     assert.equal((await response.json()).error.code, code);
 };
 
+function attachBundle(env) {
+    const state = { head: A, present: true, remoteUrl: URL.replace('.git', ''), ref: '' };
+    const original = env.ASSETS.fetch;
+    env.ASSETS.fetch = async request => {
+        const path = new globalThis.URL(request.url).pathname;
+        if (path === '/__stworks/bootstrap.json') {
+            const data = await (await original(request)).json();
+            if (state.present) data.stworks.extensions.push({
+                name: 'third-party/p4-fixture', type: 'local', commit: state.head,
+                version: state.head === A ? '1' : '2', remoteUrl: state.remoteUrl, ref: state.ref,
+            });
+            return Response.json(data);
+        }
+        if (state.present && path === PREFIX + 'manifest.json') return Response.json(manifest(state.head === A ? '1' : '2'));
+        if (state.present && path === PREFIX + 'dist/index.js') return new Response(`bundled:${state.head}`);
+        return original(request);
+    };
+    return state;
+}
+
+test('a generic prebundled plugin loads through authenticated original paths and can be managed without hardcoded sources', async t => {
+    const { env, call } = await harness(t);
+    const bundle = attachBundle(env);
+    assert.equal(await (await call(PREFIX + 'dist/index.js')).text(), `bundled:${A}`);
+    const discovered = await (await call(paths('discover'))).json();
+    assert.equal(discovered.at(-1).remoteUrl, bundle.remoteUrl);
+    assert.equal((await call(paths('cleanup'), { extensionName: 'p4-fixture' })).status, 204);
+    const row = await new Documents(env.DB).get('extension', 'local/p4-fixture');
+    assert.equal(row.value.current.remoteUrl, bundle.remoteUrl);
+    assert.equal((await call(paths('delete'), { extensionName: 'p4-fixture' })).status, 200);
+    assert.equal((await call(PREFIX + 'dist/index.js')).status, 404);
+});
+
+test('stored bundled pointers follow redeployed versions and removals without changing user data', async t => {
+    const { env, call } = await harness(t), bundle = attachBundle(env), store = new Documents(env.DB);
+    const settings = { extension_settings: { fixture: { value: [0, false, 'retained'] } } };
+    await store.put('settings', 'owner', settings);
+    assert.equal((await call(paths('cleanup'), { extensionName: 'p4-fixture' })).status, 204);
+    const before = await store.get('extension', 'local/p4-fixture');
+    bundle.head = B;
+    assert.equal((await (await call(paths('discover'))).json()).at(-1).commit, B);
+    assert.equal(await (await call(PREFIX + 'dist/index.js')).text(), `bundled:${B}`);
+    bundle.present = false;
+    assert.equal((await (await call(paths('discover'))).json()).some(item => item.name === 'third-party/p4-fixture'), false);
+    assert.equal((await call(PREFIX + 'dist/index.js')).status, 404);
+    assert.deepEqual(await store.get('extension', 'local/p4-fixture'), before);
+    assert.deepEqual((await store.get('settings', 'owner')).value, settings);
+    assert.equal(env.FILES.objects.size, 0);
+});
+
+test('online archives and uninstall tombstones keep precedence over a changed prebundle', async t => {
+    const { env, call } = await installed(t), bundle = attachBundle(env);
+    bundle.head = B;
+    assert.equal(await (await call(PREFIX + 'dist/index.js')).text(), 'window.P4Fixture = "1";');
+    assert.equal((await (await call(paths('discover'))).json()).at(-1).commit, A);
+    assert.equal((await call(paths('delete'), { extensionName: 'p4-fixture' })).status, 200);
+    assert.equal((await call(PREFIX + 'dist/index.js')).status, 404);
+    assert.equal((await (await call(paths('discover'))).json()).some(item => item.name === 'third-party/p4-fixture'), false);
+});
+
+test('bundled repository metadata must match the served folder and cannot contain credentials', async t => {
+    const { env, call } = await harness(t), bundle = attachBundle(env);
+    bundle.remoteUrl = 'https://github.com/example/other';
+    await assertError(await call(PREFIX + 'dist/index.js'), 422, 'UNMANAGED_BUNDLED_EXTENSION');
+    bundle.remoteUrl = 'https://user:secret@github.com/example/p4-fixture';
+    assert.equal((await call(PREFIX + 'dist/index.js')).status, 400);
+});
+
 test('bounded inflate accepts final partial chunks but rejects incorrect declared lengths', () => {
     for (const size of [0, 40961, 81921, 163841, 2621441]) {
         const output = new Uint8Array(size).fill(65);

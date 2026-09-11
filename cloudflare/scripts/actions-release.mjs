@@ -4,7 +4,8 @@ import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { checkAssets, createCloudConfig, validateCloudConfig } from './cloud-config.mjs';
-import { digest, MAX_PLUGIN_FILE, packagePlugins, PLUGIN_BASELINES } from './plugin-package.mjs';
+import { digest, packagePlugins, validatePluginRecord } from './plugin-package.mjs';
+import { assertLockMatchesList, downloadPlugin, preparePluginSelection, readPluginInputs, validatePluginLock } from './plugin-list.mjs';
 import { readBytes } from '../src/http.js';
 
 export function checkActionsContext(env) {
@@ -26,27 +27,8 @@ export function actionsConfig(base, env, deploy = false) {
 }
 
 export async function fetchPinnedPlugin(plugin, { fetchImpl = fetch, signal } = {}) {
-    assert.ok(PLUGIN_BASELINES.includes(plugin), 'Only the reviewed build-time plugin baselines are accepted.');
-    const url = `https://codeload.github.com/${plugin.repository}/zip/${plugin.commit}`;
-    let response;
-    try {
-        response = await fetchImpl(url, {
-            method: 'GET', redirect: 'manual', credentials: 'omit',
-            headers: { Accept: 'application/zip', 'User-Agent': 'STWorkers-build-time-installer' },
-            signal: AbortSignal.any([AbortSignal.timeout(90000), ...(signal ? [signal] : [])]),
-        });
-        if (response.status !== 200) {
-            await response.body?.cancel();
-            throw new Error('Unexpected archive response.');
-        }
-        const bytes = Buffer.from(await readBytes(response, MAX_PLUGIN_FILE));
-        assert.equal(digest(bytes), plugin.sha256);
-        return bytes;
-    } catch {
-        // Do not echo upstream bodies, redirect targets, credentials, or proxy error details into CI logs.
-        if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
-        throw new Error(`Pinned plugin download or checksum verification failed: ${plugin.id}. Nothing was deployed.`);
-    }
+    validatePluginRecord(plugin);
+    return downloadPlugin(plugin, { fetchImpl, signal });
 }
 
 async function generatedDirectory(root, relative) {
@@ -85,39 +67,61 @@ async function summary(env, text) {
 
 export async function buildActionsRelease(workerRoot, env, { fetchImpl = fetch, run = runNode } = {}) {
     // The build path never needs a deployment credential.
-    assert.ok(!env.CLOUDFLARE_API_TOKEN && !env.AUTH_PASSWORD && !env.DATA_KEY,
+    assert.ok(!env.CLOUDFLARE_API_TOKEN && !env.AUTH_PASSWORD && !env.DATA_KEY && !env.GITHUB_TOKEN && !env.GH_TOKEN,
         'Do not provide deployment credentials to the build step.');
+    assert.ok([undefined, '', 'false', 'true'].includes(env.STWORKERS_UPDATE_PLUGINS), 'Invalid plugin update selection.');
     const root = await realpath(workerRoot);
     const base = await readJson(path.join(root, 'wrangler.jsonc'));
     const config = actionsConfig(base, env);
     const build = await generatedDirectory(root, '.build');
     const output = await generatedDirectory(root, path.join('.build', 'actions'));
-    const lock = await readJson(path.join(root, '..', 'upstream-lock.json'));
-    for (const plugin of PLUGIN_BASELINES) {
-        assert.equal(lock.extensions.find(item => item.id === plugin.id)?.commit, plugin.commit, 'Plugin lock mismatch.');
-    }
+    await writeGeneratedJson(path.join(output, 'release.json'), { schema: 1, validation: 'build-incomplete' });
+    const inputs = await readPluginInputs(path.join(root, '..'));
+    const selection = await preparePluginSelection(inputs.text, inputs.lock, {
+        update: env.STWORKERS_UPDATE_PLUGINS === 'true', fetchImpl,
+    });
     const input = await mkdtemp(path.join(build, 'actions-input-'));
-    for (const plugin of PLUGIN_BASELINES) {
-        const bytes = await fetchPinnedPlugin(plugin, { fetchImpl });
+    for (const plugin of selection.lock.plugins) {
+        const bytes = selection.archives.get(plugin.id);
         await writeFile(path.join(input, plugin.archive), bytes, { flag: 'wx' });
         console.log(`Verified ${plugin.id} ${plugin.version}: ${plugin.sha256}`);
     }
     const bundle = path.join(input, 'bundle');
-    await packagePlugins(input, bundle, lock);
+    await packagePlugins(input, bundle, null, selection.lock.plugins);
     await run(root, ['scripts/build-assets.mjs', '--plugins', path.join(bundle, 'bundle.json')], env);
-    const assets = await checkAssets(root, config);
+    const assets = await checkAssets(root, config, {}, selection.lock.plugins);
     const configFile = path.join(output, 'wrangler.json');
     await writeGeneratedJson(configFile, config);
     await run(root, ['node_modules/wrangler/bin/wrangler.js', 'deploy', '--config', configFile,
         '--dry-run', '--outdir', path.join(output, 'worker'), '--strict', '--x-auto-create=false', '--no-x-provision'], env);
+    await writeGeneratedJson(path.join(output, 'plugins.lock.json'), selection.lock);
     const receipt = { schema: 1, configSha256: digest(Buffer.from(JSON.stringify(config))),
         manifestSha256: digest(await readFile(path.join(build, 'build-manifest-p3.json'))),
+        inputListSha256: digest(Buffer.from(inputs.text)),
+        inputLockSha256: digest(Buffer.from(JSON.stringify(inputs.lock))),
+        pluginLockSha256: digest(Buffer.from(JSON.stringify(selection.lock))), lockChanged: selection.changed,
         plugins: assets.plugins, files: assets.files, bytes: assets.bytes,
         validation: 'local-build-and-dry-run-only', cloudVerified: false };
     await writeGeneratedJson(path.join(output, 'release.json'), receipt);
     await summary(env, `Prepared ${assets.plugins.length} pinned plugins and ${assets.files} assets. `
         + 'Build and dry-run completed. No Cloudflare resources or secrets were changed.');
     return receipt;
+}
+
+export async function readReleaseSelection(root) {
+    const directory = await generatedDirectory(root, path.join('.build', 'actions'));
+    const receipt = await readJson(path.join(directory, 'release.json'));
+    const lock = validatePluginLock(await readJson(path.join(directory, 'plugins.lock.json')));
+    const inputs = await readPluginInputs(path.join(root, '..'));
+    assertLockMatchesList(inputs.text, lock);
+    assert.ok(receipt.schema === 1 && receipt.validation === 'local-build-and-dry-run-only'
+        && receipt.inputListSha256 === digest(Buffer.from(inputs.text))
+        && receipt.inputLockSha256 === digest(Buffer.from(JSON.stringify(inputs.lock)))
+        && receipt.pluginLockSha256 === digest(Buffer.from(JSON.stringify(lock)))
+        && receipt.manifestSha256 === digest(await readFile(path.join(root, '.build', 'build-manifest-p3.json')))
+        && receipt.lockChanged === !isDeepStrictEqual(inputs.lock, lock),
+    'A matching successful build and unchanged plugin inputs are required.');
+    return { receipt, lock, inputs };
 }
 
 export async function checkExistingInstance(config, token, { fetchImpl = fetch } = {}) {
@@ -177,12 +181,18 @@ export async function deployActionsRelease(workerRoot, env, { fetchImpl = fetch,
     const config = await readJson(configFile);
     validateCloudConfig(config, base, expected.name);
     assert.ok(isDeepStrictEqual(config, expected), 'Build and deployment targets differ. Rebuild before deploying.');
-    const receipt = await readJson(path.join(directory, 'release.json'));
+    const { receipt, lock } = await readReleaseSelection(root);
     assert.ok(receipt.schema === 1 && receipt.validation === 'local-build-and-dry-run-only'
         && receipt.configSha256 === digest(Buffer.from(JSON.stringify(config)))
         && receipt.manifestSha256 === digest(await readFile(path.join(root, '.build', 'build-manifest-p3.json'))),
     'A matching successful build receipt is required before deployment.');
-    await checkAssets(root, config, env.CLOUDFLARE_API_TOKEN ? { token: env.CLOUDFLARE_API_TOKEN } : {});
+    const saved = await readJson(path.join(directory, 'lock-saved.json'));
+    assert.ok(saved.schema === 1 && saved.sourceRevision === env.GITHUB_SHA
+        && saved.repository === env.GITHUB_REPOSITORY && saved.ref === env.GITHUB_REF
+        && saved.pluginLockSha256 === receipt.pluginLockSha256
+        && /^[a-f0-9]{40}$/.test(saved.savedRevision),
+    'Save the generated plugin lock on the current default branch before deployment.');
+    await checkAssets(root, config, env.CLOUDFLARE_API_TOKEN ? { token: env.CLOUDFLARE_API_TOKEN } : {}, lock.plugins);
     await checkExistingInstance(config, env.CLOUDFLARE_API_TOKEN, { fetchImpl });
     // Omit --secrets-file: required secret bindings must inherit their existing values.
     await run(root, ['node_modules/wrangler/bin/wrangler.js', 'deploy', '--config', configFile,

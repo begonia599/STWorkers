@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "plugins": [
+    {
+      "id": "JS-Slash-Runner",
+      "repository": "N0VI028/JS-Slash-Runner",
+      "ref": "HEAD",
+      "version": "4.9.5",
+      "commit": "8e0f4324e7d051025a333831411f03bd3145fac8",
+      "archive": "helper.zip",
+      "license": "AFPL-9",
+      "sha256": "be7919088b9fdb0edf0544b683cdc23895823a463c7a8b36536ad517bdc5c07a",
+      "layout": "legacy"
+    },
+    {
+      "id": "ST-Prompt-Template",
+      "repository": "zonde306/ST-Prompt-Template",
+      "ref": "HEAD",
+      "version": "1.17.9",
+      "commit": "d6f520d149aba146305b0b781ddd691d449c28d2",
+      "archive": "ejs.zip",
+      "license": "AGPL-3.0",
+      "sha256": "1a866075e0bf7499f4fb0c39e5e763077aeddfee851624b4464289176943546b",
+      "layout": "legacy"
+    }
+  ]
+}

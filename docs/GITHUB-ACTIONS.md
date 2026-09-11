@@ -7,8 +7,10 @@
 
 ## 当前范围
 
-- 复用 P3 已验证的随包方式，预装酒馆助手 4.9.5 与 EJS 1.17.9。
-- 固定上游提交和 ZIP SHA-256，使用原编译文件，不运行插件的 npm 生命周期、构建或 Git hook。
+- 从根目录 `plugins.txt` 读取预装清单，默认仍为酒馆助手 4.9.5 与 EJS 1.17.9。
+- `plugins.lock.json` 保存具体提交、ZIP SHA-256 和打包布局；普通重建沿用旧版本，
+  新增条目自动解析，只有显式勾选 `update_plugins` 才检查已有插件的新版本。
+- 使用仓库已有编译文件，不运行插件的 npm 生命周期、构建命令或 Git hook。
 - 输出到 `cloudflare/.build/assets-p3`，运行路径仍为原版 `scripts/extensions/third-party/`。
 - 默认只构建和 dry-run；显式勾选后才更新一个已经初始化的个人实例。
 - 本轮不自动开通账号、创建 Worker/D1/R2、执行数据库迁移或初始化密钥。
@@ -17,9 +19,59 @@
   原 ST 的十个工作流已移到 `.github/upstream-workflows/` 仅作参考，
   不参与本仓库 push、定时、Issue、PR 或发布事件。当前仅激活本手动工作流。
 
-2026-09-11 已推送到所有者私有仓库，首次 GitHub 托管 Linux 构建成功。
+2026-09-11，清单改造前的固定两插件版本已推送到所有者私有仓库，首次 GitHub 托管 Linux 构建成功。
 本次 `deploy=false`，没有配置 GitHub Secrets、通过 Actions 部署 Cloudflare 或修改云端资源。
 Actions 到 Cloudflare 的 Token 权限、真实更新和运行验收仍待验证。
+本轮清单与锁文件自动保存改造只在本地验证，尚未推送或运行新版托管工作流。
+
+## 用户只编辑清单
+
+首次 Fork 后，按需编辑根目录 `plugins.txt`；只用默认两插件则无需修改。
+一行一个公开 GitHub 仓库地址，例如：
+
+```text
+https://github.com/N0VI028/JS-Slash-Runner
+https://github.com/zonde306/ST-Prompt-Template
+```
+
+添加插件时增加一行、保存提交，再运行工作流。无需编辑打包脚本或手算哈希。
+空行及以 `#` 开头的注释会被忽略；支持 `.git` 后缀，
+高级用法为 `https://github.com/owner/repo#branch-or-tag-or-commit`。
+没有后缀表示首次解析默认分支；之后仍锁定到已保存的提交，不自动追随上游。
+
+两个复选框含义不同：
+
+- `deploy`：构建验证及保存锁文件后，更新已有 Cloudflare 实例。默认关闭。
+- `update_plugins`：检查清单中已有插件的新版本。默认关闭；只添加新插件不需要勾选。
+
+成功构建后，默认分支工作流使用 GitHub 内置临时 `GITHUB_TOKEN`，
+仅将生成的 `plugins.lock.json` 保存为一次提交；没有变化时不提交。
+普通用户不需要额外申请 GitHub PAT，也不手动编辑锁文件。
+即使 `deploy=false`，成功构建也可能保存新锁文件，但不会操作 Cloudflare。
+构建其他分支只能验证，不回写锁文件，也不部署。
+本地 `build` 只生成 `.build/actions/plugins.lock.json`，不会修改根目录锁文件或远端仓库。
+
+保存前校验本次运行的分支、提交、清单、构建回执及远端 HEAD。
+只修改锁文件，使用非强制更新；并发提交、分支保护或写权限不足时停止，
+不自动放宽保护、不重试覆盖。请检查运行提示，再从最新默认分支重跑。
+工作流拥有仓库 `contents: write` 权限，临时 Token 仅传给保存步骤；
+checkout 不持久化凭据，插件下载与打包步骤不注入该 Token。
+这是可信仓库中的构建流程，不是不可信代码沙箱。
+
+删掉一行只取消下次部署的预装；空清单也是合法输入。
+不会清理聊天、设置、变量或 R2，已在线安装的插件与卸载记录仍有优先级。
+曾被记录到数据库的 bundled 指针会跟随当前部署的版本或移除，
+旧 bundled 回退目标已经不在部署包内时仍明确拒绝回退，不伪称旧代码可恢复。
+
+当前支持有根目录 `manifest.json` 及可直接运行的 JS/CSS 的公开 GitHub 前端扩展，
+包括根目录脚本、相对导入、HTML 模板、翻译、图片及字体。
+不自动编译仅有源码的分支，不支持私有仓库认证，也不据此宣称 Node 后端插件能在 Workers 运行。
+缺失 manifest 引用资源、路径冲突、同名仓库目录、下载或哈希失败会停止构建。
+上限为 32 个条目、每包 25 MiB、所选压缩归档合计 128 MiB，最终资源另受资产检查约束。
+首次新增或更新时的哈希是完整性锁定，不是对插件安全性或许可的审核结论。
+
+“首次授权后免手填 Cloudflare Token”的部署入口、自动创建资源和初始化密钥仍属于未完成的 P5；
+当前 Actions 直接部署现有实例仍使用下节的 Cloudflare Secret。
 
 ## 使用入口
 
@@ -77,11 +129,14 @@ Token 可按 Cloudflare 官方 CI 文档从 Edit Cloudflare Workers 权限策略
 1. 手动触发；只有仓库默认分支可以执行上传，其他分支最多构建验证。
 2. 安装锁文件中的项目依赖，两次 `npm ci` 都带 `--ignore-scripts`。
 3. 执行 `cloudflare/test` 安全与契约测试。
-4. 从固定 `codeload.github.com` 提交地址下载两份 ZIP，无 Cookie、所有者或 Cloudflare 凭据。
+4. 按清单及锁文件从固定 `codeload.github.com` 提交地址下载 ZIP，无 Cookie、所有者或 Cloudflare 凭据；
+   仅新条目、改动的 ref 或主动更新才调用 GitHub 公共 API 解析提交。限流或重定向明确失败。
 5. 有界读取，拒绝重定向和非 200 响应；哈希不符立即停止。
 6. 调用现有 `packagePlugins` 和原版静态资源构建器，保留许可与完整源归档。
-7. 核对资源清单、插件基线、私有文件排除与鉴权配置，执行 Wrangler dry-run。
-8. 仅勾选 `deploy` 时，部署步骤获得 Cloudflare Token；先只读核对现有 Worker 绑定、D1 和 R2。
+7. 核对资源清单、所选插件锁、私有文件排除与鉴权配置，执行 Wrangler dry-run；
+   通过后在默认分支保存锁文件。下载或构建失败不会生成可部署的成功回执。
+8. 仅勾选 `deploy` 时，部署步骤获得 Cloudflare Token；先验证锁文件保存回执，
+   再只读核对现有 Worker 绑定、D1 和 R2。
 9. 使用固定 Wrangler 4.129.1 更新，开启 `--strict`，关闭资源自动预配和创建，
    不传 `--secrets-file`，不运行迁移或密钥写命令。
 10. 命令成功后再读绑定核对。后置核对失败会明确说明部署命令已经运行，不伪称没有上传。
@@ -96,14 +151,15 @@ Cloudflare Token 只注入最后一个步骤，不在下载、依赖安装或构
 
 ## 插件版本与数据
 
-本次复用原锁定插件，不是自动追随上游 latest，也不是永久只允许这两个插件。
-版本变化应同时审查 `upstream-lock.json`、`plugin-package.mjs` 的提交/哈希和兼容证据。
-未纳入随包清单的其他插件不在这份工作流的预装范围内。
+默认清单复用原锁定插件，不自动追随上游 latest，也不永久只允许这两个插件。
+用户预装由 `plugins.txt` 和自动保存的 `plugins.lock.json` 管理。
+`upstream-lock.json` 与脚本中的 `PLUGIN_BASELINES` 继续保留为原 P3 对照基线，
+不是新增插件白名单，也不随用户清单改变而改写历史兼容证据。
 
 部署不改 D1 的设置、聊天、变量或插件安装记录，也不清理 R2。
-已在线安装的版本、卸载 tombstone 以及已有 bundled 指针仍按当前后端的优先级处理。
-因此重新部署不等于强制重装插件；更改未来的随包提交还需要核对旧安装/回退记录，
-不能用一次静态上传宣称旧指针已经自动迁移。
+已在线安装的版本、卸载 tombstone 仍按当前后端的优先级处理。
+bundled 当前指针以本次部署清单为准，不写数据库做破坏式迁移。
+因此重新部署不等于强制重装插件，也不保证旧部署中的 bundled 回退文件仍存在。
 
 预装路径避开了 Worker 在线下载和解压安装过程，但聊天 API、鉴权及存储仍消耗 Worker 资源。
 GitHub 配额、Cloudflare 套餐与免费资源验收、浮动 CDN 可达性、源码大包下载稳定性
@@ -118,12 +174,15 @@ GitHub 配额、Cloudflare 套餐与免费资源验收、浮动 CDN 可达性、
 npm.cmd --prefix cloudflare test
 node cloudflare/scripts/github-actions.mjs build
 node cloudflare/scripts/check-actions-local.mjs <提供-playwright-的-package.json> <Chrome-可执行文件>
+node cloudflare/scripts/check-actions-local.mjs <提供-playwright-的-package.json> <Chrome-可执行文件> --with-list-fixture
 ```
 
 本地 `build` 会真实下载公开 ZIP 并替换生成的 `.build/assets-p3`，不上传。
 本地 `deploy` 默认拒绝执行，不应伪造 GitHub 环境变量绕过保护。
 浏览器脚本使用全新临时 D1/R2、随机登录密码和回环端口，不读取所有者数据或调用模型；
 测试后关闭运行时和浏览器。
+`--with-list-fixture` 在独立复制的静态资源目录中，经清单解析及真实打包函数添加一个合成第三插件，
+检查根目录模块、相对导入、模板和 CSS。不会修改正式清单、锁文件或默认两插件的构建产物。
 
 2026-09-10 本地验证：
 
