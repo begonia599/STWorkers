@@ -231,7 +231,8 @@ export async function deployNativeRelease(projectRoot, env, { run = runNativeNod
             },
             upload: async () => {
                 uploadStarted = true;
-                await run(root, [wrangler, 'deploy', '--config', configFile, '--strict',
+                // Bindings are verified above and after upload. Dashboard diffs omit local D1/R2 metadata.
+                await run(root, [wrangler, 'deploy', '--config', configFile,
                     '--x-auto-create=false', '--no-x-provision', '--message', `STWorkers native build ${context.revision}`], env);
             },
         });

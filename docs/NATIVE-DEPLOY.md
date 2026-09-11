@@ -100,6 +100,29 @@ Secret PUT 现在接受 `200/201`，仍要求有效 JSON、`success: true` 和�
 若查询仍缺少密钥，则保持 pending 并停止，不盲目重生成。更新代码即可重试，无需删库、重建资源或更改登录密码。
 以上记录不代表后续上传、登录及插件运行已通过真实云端验收。
 
+## Dashboard 配置差异与上传
+
+真实按钮构建 `7e7971c` 在 2026-09-12 11:05（北京时间）完成插件打包与构建，
+迁移检查也返回无待执行项，但 Wrangler 上传被 `--strict` 拒绝，因此密码限制修复未上线。
+本次日志列出的差异只有 D1 的 `database_name`、`migrations_dir` 和 R2 的 `preview_bucket_name`。
+这些本地配置字段不等于远端绑定里的数据库 ID 或生产桶名称发生变化。
+
+原生上传命令现在不再添加 `--strict`。锁定版 Wrangler 4.129.1 在非交互模式下，
+会因该标志拒绝 Dashboard 与本地配置的整体差异，包括以上字段；不加该标志时按已校验的根配置上传。
+这不是遇到任意错误后自动重试，也不修改平台写回的 `wrangler.jsonc`。
+原生入口在迁移前核对实际 D1 ID/名称、R2 桶名与 secret 类型，上传前后再次核对绑定。
+错误资源、额外绑定、缺失密钥、有数据却缺钥和鉴权配置变更仍会停止部署；
+禁止自动创建资源的参数及已有 secret 的继承方式均保留，Actions 路线不在此次改动范围内。
+
+部署时仍可能看到 Dashboard 配置差异警告，但不能把警告本身当作上传失败。
+以命令退出状态、最终部署结果和线上入口检查为准；无需通过改密码、删资源或重建数据库处理此错误。
+
+此次本地回归：311 项测试通过，0 失败、0 跳过。新增用例覆盖相同本地字段差异下的原生上传命令、
+已有密钥和文档保留、错误资源在迁移前拒绝、迁移期间绑定变化在上传前拒绝。
+标准构建 dry-run 为 666.96 KiB（gzip 129.84 KiB），根配置使用已有预装资产的 dry-run
+为 667.79 KiB（gzip 129.87 KiB）。部署控制流用例模拟控制面和命令执行，
+dry-run 不访问真实上传流程；这些结果不能替代后续 Workers Builds 的成功记录和线上验证。
+
 ## 初始化与更新
 
 1. 构建父进程只读 D1 的既有插件锁；子进程只接收必要运行环境，不接收平台或自定义构建秘密。
@@ -113,7 +136,7 @@ Secret PUT 现在接受 `200/201`，仍要求有效 JSON、`success: true` 和�
 
 平台按钮负责预配资源；脚本不是遇到 403/404 就自动创建替代数据库或扩大权限的工具。
 已有 `DATA_KEY` 时永不生成替代值。发现有数据却缺钥、无关表或不匹配绑定时，部署停止。
-访问密码是否足够长仍由运行时检查；控制面 secret 元数据只可确认名字，不能替代真实登录测试。
+访问密码是否为非空有效值仍由运行时检查；控制面 secret 元数据只可确认名字，不能替代真实登录测试。
 下载子进程移除环境秘密不是不可信代码沙箱，项目源码、依赖、维护权限和浏览器插件仍需要信任。
 
 原生版本选择按清单中的仓库和 ref 匹配，仓库锁优先，再沿用 D1 里的既有锁。
@@ -153,7 +176,7 @@ npm ci --ignore-scripts
 npm --prefix cloudflare ci --ignore-scripts
 npm --prefix cloudflare test
 npm run build:cloud
-node cloudflare/node_modules/wrangler/bin/wrangler.js deploy --config wrangler.jsonc --dry-run --outdir cloudflare/.build/native/root-worker --strict --x-auto-create=false --no-x-provision
+node cloudflare/node_modules/wrangler/bin/wrangler.js deploy --config wrangler.jsonc --dry-run --outdir cloudflare/.build/native/root-worker --x-auto-create=false --no-x-provision
 npm --prefix cloudflare run build
 ```
 

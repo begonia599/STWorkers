@@ -382,7 +382,7 @@ test('credential capture is private and child-process failures never leak captur
         error => !error.message.includes(token));
 });
 
-async function releaseFixture(t, selectedConfig = config, { secretStatus = 200 } = {}) {
+async function releaseFixture(t, selectedConfig = config, { secretStatus = 200, initialized = false, documents = false } = {}) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'stworkers-native-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const worker = path.join(root, 'cloudflare'), build = path.join(worker, '.build');
@@ -408,7 +408,7 @@ async function releaseFixture(t, selectedConfig = config, { secretStatus = 200 }
     await put(path.join(native, 'release.json'), { passed: true, stage: 'build-and-dry-run-only',
         revision: env.WORKERS_CI_COMMIT_SHA, configSha256: digest(Buffer.from(JSON.stringify(selectedConfig))),
         receiptSha256: digest(Buffer.from(JSON.stringify(receipt))) });
-    const f = fixture(t), commands = [], requests = [];
+    const f = fixture(t, { initialized, documents }), commands = [], requests = [];
     const options = {
         run(cwd, args) {
             assert.equal(cwd, root);
@@ -443,7 +443,7 @@ test('native deploy wrapper binds migrations to DB, inherits secrets on upload a
     assert.equal(f.commands.length, 2);
     assert.deepEqual(f.commands[0].slice(1, 6), ['d1', 'migrations', 'apply', 'DB', '--remote']);
     assert.ok(f.commands[1].includes('--x-auto-create=false') && f.commands[1].includes('--no-x-provision'));
-    assert.ok(!f.commands[1].includes('--secrets-file'));
+    assert.ok(!f.commands[1].includes('--strict') && !f.commands[1].includes('--secrets-file'));
     const recorded = JSON.parse(await readFile(path.join(f.native, 'deployment.json'), 'utf8'));
     assert.equal(recorded.bindingsVerified, true);
     assert.equal(f.keys.length, 1);
@@ -463,6 +463,78 @@ test('native deploy preserves the platform preview bucket and the exact configur
     assert.ok(f.events.indexOf('migrate') < f.events.indexOf('key'));
     assert.ok(f.events.indexOf('key') < f.events.indexOf('upload'));
     assert.equal(f.keys.length, 1);
+});
+
+test('native upload accepts local-only binding metadata after checking existing resources and inherits secrets', async t => {
+    const selected = structuredClone(config);
+    selected.r2_buckets[0].preview_bucket_name = selected.r2_buckets[0].bucket_name;
+    const f = await releaseFixture(t, selected, { initialized: true, documents: true });
+    const configFile = path.join(f.root, 'wrangler.jsonc');
+    const beforeConfig = await readFile(configFile);
+    const beforeDocuments = f.db.prepare('SELECT * FROM documents').all();
+    const beforeBindings = structuredClone(f.bindings);
+    assert.ok(!Object.hasOwn(f.bindings.find(binding => binding.type === 'd1'), 'database_name'));
+    assert.ok(!Object.hasOwn(f.bindings.find(binding => binding.type === 'd1'), 'migrations_dir'));
+    assert.ok(!Object.hasOwn(f.bindings.find(binding => binding.type === 'r2_bucket'), 'preview_bucket_name'));
+    const run = f.options.run;
+    f.options.run = async (root, args) => {
+        if (args[1] === 'deploy') {
+            assert.ok(!args.includes('--strict'), 'Dashboard omission of local-only metadata must not block upload.');
+            assert.ok(!args.includes('--secrets-file'));
+            assert.ok(args.includes('--x-auto-create=false') && args.includes('--no-x-provision'));
+            assert.equal(args[args.indexOf('--config') + 1], configFile);
+            assert.ok(f.requests.some(request => request.url.includes('/d1/database/')));
+            assert.ok(f.requests.some(request => request.url.includes('/r2/buckets/')));
+            assert.ok(f.requests.filter(request => request.url.endsWith('/settings')).length >= 2);
+        }
+        return run(root, args);
+    };
+    const result = await deployNativeRelease(f.root, { ...env, CLOUDFLARE_API_TOKEN: 'synthetic-native-api-token' }, f.options);
+    assert.equal(result.uploadCompleted, true);
+    assert.equal(result.bindingsVerified, true);
+    assert.equal(result.existingKeyInherited, true);
+    assert.deepEqual(await readFile(configFile), beforeConfig);
+    assert.deepEqual(f.db.prepare('SELECT * FROM documents').all(), beforeDocuments);
+    assert.deepEqual(f.bindings, beforeBindings);
+    assert.deepEqual(f.keys, []);
+    assert.equal(f.requests.some(request => request.method === 'PUT'), false);
+});
+
+test('native upload still rejects actual binding or resource changes before running Wrangler', async t => {
+    for (const mutate of [
+        f => { f.client.database = async () => ({ name: 'different-db' }); },
+        f => { f.client.bucket = async () => ({ name: 'different-bucket' }); },
+        f => { f.bindings.find(binding => binding.name === 'DB').id = 'different-id'; },
+        f => { f.bindings.find(binding => binding.name === 'FILES').bucket_name = 'different-bucket'; },
+        f => { f.bindings.find(binding => binding.name === 'AUTH_PASSWORD').type = 'plain_text'; },
+        f => { f.bindings.splice(f.bindings.findIndex(binding => binding.name === 'DATA_KEY'), 1); },
+        f => { f.bindings.push({ name: 'OTHER', type: 'r2_bucket', bucket_name: 'different-bucket' }); },
+    ]) {
+        const f = await releaseFixture(t, config, { initialized: true, documents: true });
+        const before = f.db.prepare('SELECT * FROM documents').all();
+        mutate(f);
+        await assert.rejects(deployNativeRelease(f.root, { ...env, CLOUDFLARE_API_TOKEN: 'synthetic-native-api-token' }, f.options),
+            /Migration started: false; upload started: false/);
+        assert.deepEqual(f.commands, []);
+        assert.deepEqual(f.keys, []);
+        assert.equal(f.requests.some(request => request.method === 'PUT'), false);
+        assert.deepEqual(f.db.prepare('SELECT * FROM documents').all(), before);
+    }
+});
+
+test('binding changes during migration still stop the native upload after its preflight', async t => {
+    const f = await releaseFixture(t, config, { initialized: true, documents: true });
+    const run = f.options.run;
+    f.options.run = async (root, args) => {
+        const result = await run(root, args);
+        if (args[1] === 'd1') f.bindings.find(binding => binding.name === 'DB').id = 'different-id';
+        return result;
+    };
+    await assert.rejects(deployNativeRelease(f.root, { ...env, CLOUDFLARE_API_TOKEN: 'synthetic-native-api-token' }, f.options),
+        /Migration started: true; upload started: false/);
+    assert.equal(f.commands.length, 1);
+    assert.equal(f.commands[0][1], 'd1');
+    assert.deepEqual(f.keys, []);
 });
 
 test('native deploy accepts secret creation HTTP 201 and rechecks the binding before uploading', async t => {
