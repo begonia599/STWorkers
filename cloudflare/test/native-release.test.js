@@ -83,6 +83,45 @@ test('native profile rejects authentication bypasses, extra bindings, paid servi
     for (const name of ['../../escape', 'ab', 'bad space', 'UPPER']) assert.throws(() => createNativeConfig({ name }));
 });
 
+test('native profile accepts the deploy button preview bucket alias without mutating the configuration', () => {
+    const actual = createNativeConfig({ name: 'button-worker', databaseName: 'button-db',
+        databaseId: config.d1_databases[0].database_id, bucketName: 'button-files', accountId: env.CLOUDFLARE_ACCOUNT_ID });
+    actual.r2_buckets[0].preview_bucket_name = actual.r2_buckets[0].bucket_name;
+    const bytes = JSON.stringify(actual);
+    Object.freeze(actual.r2_buckets[0]);
+    Object.freeze(actual.r2_buckets);
+    Object.freeze(actual);
+    assert.equal(validateNativeConfig(actual, { provisioned: true }), actual);
+    assert.equal(nativeContext(actual, env).name, 'button-worker');
+    assert.equal(JSON.stringify(actual), bytes);
+    const placeholder = createNativeConfig();
+    placeholder.r2_buckets[0].preview_bucket_name = placeholder.r2_buckets[0].bucket_name;
+    validateNativeConfig(placeholder);
+    assert.throws(() => validateNativeConfig(placeholder, { provisioned: true }), /must provision D1/);
+});
+
+test('native profile rejects another or malformed preview bucket without ignoring the field', () => {
+    for (const value of ['another-bucket', '../escape', '', null, undefined, false, 1, [], {}]) {
+        const actual = structuredClone(config);
+        actual.r2_buckets[0].preview_bucket_name = value;
+        assert.throws(() => validateNativeConfig(actual), /protected template/);
+        assert.equal(actual.r2_buckets[0].preview_bucket_name, value);
+    }
+});
+
+test('a matching preview bucket does not relax authentication, binding or production guards', () => {
+    const actual = structuredClone(config);
+    actual.r2_buckets[0].preview_bucket_name = actual.r2_buckets[0].bucket_name;
+    for (const changed of [
+        { ...actual, assets: { ...actual.assets, run_worker_first: false } },
+        { ...actual, preview_urls: true }, { ...actual, secrets: { required: ['AUTH_PASSWORD'] } },
+        { ...actual, r2_buckets: [{ ...actual.r2_buckets[0], binding: 'OTHER' }] },
+        { ...actual, r2_buckets: [{ ...actual.r2_buckets[0], unexpected: true }] },
+        { ...actual, r2_buckets: [...actual.r2_buckets, { binding: 'OTHER', bucket_name: 'other' }] },
+    ]) assert.throws(() => validateNativeConfig(changed), /protected template/);
+    assert.throws(() => nativeContext(actual, { ...env, WORKERS_CI_BRANCH: 'preview' }));
+});
+
 test('native deployment requires platform production context and rejects an ambiguous account', () => {
     for (const change of [
         { WORKERS_CI: '' }, { CI: '' }, { WORKERS_CI_BRANCH: 'preview' },
@@ -292,7 +331,7 @@ test('credential capture is private and child-process failures never leak captur
         error => !error.message.includes(token));
 });
 
-async function releaseFixture(t) {
+async function releaseFixture(t, selectedConfig = config) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'stworkers-native-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const worker = path.join(root, 'cloudflare'), build = path.join(worker, '.build');
@@ -300,7 +339,7 @@ async function releaseFixture(t) {
     for (const dir of [actions, native, path.join(assets, '__stworks')]) await mkdir(dir, { recursive: true });
     const empty = { schema: 1, plugins: [] };
     const put = async (file, value) => writeFile(file, JSON.stringify(value));
-    await put(path.join(root, 'wrangler.jsonc'), config);
+    await put(path.join(root, 'wrangler.jsonc'), selectedConfig);
     await writeFile(path.join(root, 'plugins.txt'), '');
     await put(path.join(root, 'plugins.lock.json'), empty);
     await put(path.join(actions, 'plugins.lock.json'), empty);
@@ -316,7 +355,7 @@ async function releaseFixture(t) {
         manifestSha256: digest(Buffer.from(JSON.stringify(manifest))), lockChanged: false };
     await put(path.join(actions, 'release.json'), receipt);
     await put(path.join(native, 'release.json'), { passed: true, stage: 'build-and-dry-run-only',
-        revision: env.WORKERS_CI_COMMIT_SHA, configSha256: digest(Buffer.from(JSON.stringify(config))),
+        revision: env.WORKERS_CI_COMMIT_SHA, configSha256: digest(Buffer.from(JSON.stringify(selectedConfig))),
         receiptSha256: digest(Buffer.from(JSON.stringify(receipt))) });
     const f = fixture(t), commands = [], requests = [];
     const options = {
@@ -359,11 +398,33 @@ test('native deploy wrapper binds migrations to DB, inherits secrets on upload a
     assert.equal(f.keys.length, 1);
 });
 
+test('native deploy preserves the platform preview bucket and the exact configuration receipt', async t => {
+    const selected = structuredClone(config);
+    selected.r2_buckets[0].preview_bucket_name = selected.r2_buckets[0].bucket_name;
+    const f = await releaseFixture(t, selected);
+    const configFile = path.join(f.root, 'wrangler.jsonc');
+    const before = await readFile(configFile);
+    const result = await deployNativeRelease(f.root, { ...env, CLOUDFLARE_API_TOKEN: 'synthetic-native-api-token' }, f.options);
+    assert.equal(result.uploadCompleted, true);
+    assert.equal(result.bindingsVerified, true);
+    assert.deepEqual(await readFile(configFile), before);
+    assert.equal(f.commands.length, 2);
+    assert.ok(f.events.indexOf('migrate') < f.events.indexOf('key'));
+    assert.ok(f.events.indexOf('key') < f.events.indexOf('upload'));
+    assert.equal(f.keys.length, 1);
+});
+
 test('native deploy rejects local/preview context, changed configuration and stale build metadata before remote requests', async t => {
     for (const change of [
         async f => ({ ...env, WORKERS_CI: '' }),
         async f => ({ ...env, WORKERS_CI_BRANCH: 'feature' }),
         async f => { await writeFile(path.join(f.root, 'wrangler.jsonc'), JSON.stringify(config) + '\n'); return env; },
+        async f => {
+            const changed = structuredClone(config);
+            changed.r2_buckets[0].preview_bucket_name = changed.r2_buckets[0].bucket_name;
+            await writeFile(path.join(f.root, 'wrangler.jsonc'), JSON.stringify(changed));
+            return env;
+        },
         async f => { await writeFile(path.join(f.native, 'release.json'), '{"passed":false}'); return env; },
     ]) {
         const f = await releaseFixture(t);

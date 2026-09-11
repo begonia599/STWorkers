@@ -34,8 +34,13 @@ export function validateNativeConfig(config, { provisioned = false } = {}) {
         databaseId: config.d1_databases?.[0]?.database_id,
         bucketName: config.r2_buckets?.[0]?.bucket_name,
     });
+    if (Object.hasOwn(config.r2_buckets?.[0] ?? {}, 'preview_bucket_name')) {
+        // The deploy button adds this alias; it must not select another bucket.
+        expected.r2_buckets[0].preview_bucket_name = expected.r2_buckets[0].bucket_name;
+    }
     assert.ok(isDeepStrictEqual(config, expected),
-        'Native configuration differs from the protected template; only names, account and database ID may change.');
+        'Native configuration differs from the protected template; only names, account, database ID '
+        + 'and an R2 preview bucket matching bucket_name may change.');
     assert.ok(!provisioned || config.d1_databases[0].database_id !== NATIVE_DATABASE_PLACEHOLDER,
         'The deploy button must provision D1 before native deployment. The example ID cannot be deployed.');
     return config;
