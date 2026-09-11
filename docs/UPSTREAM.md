@@ -2,6 +2,9 @@
 
 LLM Frontend for Power Users
 
+The original [upstream README](../.github/upstream-readme.md) is preserved separately.
+The repository homepage uses the [STWorkers README](../README.md).
+
 ## Resources
 
 - GitHub: <https://github.com/SillyTavern/SillyTavern>
