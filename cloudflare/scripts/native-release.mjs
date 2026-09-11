@@ -64,7 +64,7 @@ export function nativeToken(root, env, run = runNativeNode) {
 export function nativeClient(config, context, token, { fetchImpl = fetch } = {}) {
     const prefix = `https://api.cloudflare.com/client/v4/accounts/${context.accountId}`;
     const queryPath = `/d1/database/${config.d1_databases[0].database_id}/query`;
-    async function request(suffix, { method = 'GET', body } = {}) {
+    async function request(suffix, { method = 'GET', body, expectedStatuses = [200] } = {}) {
         let response, result;
         try {
             response = await fetchImpl(prefix + suffix, {
@@ -73,7 +73,7 @@ export function nativeClient(config, context, token, { fetchImpl = fetch } = {})
                     ...(body ? { 'Content-Type': 'application/json' } : {}) },
                 ...(body ? { body: JSON.stringify(body) } : {}),
             });
-            if (response.status !== 200) {
+            if (!expectedStatuses.includes(response.status)) {
                 await response.body?.cancel();
                 throw new Error();
             }
@@ -96,9 +96,12 @@ export function nativeClient(config, context, token, { fetchImpl = fetch } = {})
             return result[0].results;
         },
         async createDataKey(key) {
-            await request(`/workers/scripts/${context.name}/secrets`, {
-                method: 'PUT', body: { name: 'DATA_KEY', type: 'secret_text', text: key },
+            const result = await request(`/workers/scripts/${context.name}/secrets`, {
+                method: 'PUT', expectedStatuses: [200, 201],
+                body: { name: 'DATA_KEY', type: 'secret_text', text: key },
             });
+            assert.ok(result?.name === 'DATA_KEY' && result?.type === 'secret_text',
+                'Cloudflare did not confirm the expected DATA_KEY secret. Inspect existing bindings before retrying.');
         },
     };
 }

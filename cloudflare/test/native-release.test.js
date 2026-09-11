@@ -293,6 +293,7 @@ test('control-plane requests remain on the selected Cloudflare account without r
         assert.equal(options.headers.Authorization, `Bearer ${token}`);
         assert.equal(options.headers.Cookie, undefined);
         if (url.endsWith('/query')) return Response.json({ success: true, result: [{ success: true, results: [] }] });
+        if (url.endsWith('/secrets')) return Response.json({ success: true, result: { name: 'DATA_KEY', type: 'secret_text' } });
         return Response.json({ success: true, result: {} });
     } });
     await client.settings();
@@ -303,6 +304,56 @@ test('control-plane requests remain on the selected Cloudflare account without r
     assert.equal(requests.length, 5);
     assert.equal(JSON.parse(requests[4].options.body).name, 'DATA_KEY');
     assert.equal(requests[4].options.method, 'PUT');
+});
+
+test('secret writes accept HTTP 200 and 201 with the expected acknowledgement', async () => {
+    for (const status of [200, 201]) {
+        const requests = [];
+        const client = nativeClient(config, context, 'synthetic-native-token', { fetchImpl: async (url, options) => {
+            requests.push({ url, options });
+            return Response.json({ success: true, result: { name: 'DATA_KEY', type: 'secret_text' } }, { status });
+        } });
+        await client.createDataKey('a'.repeat(43) + '=');
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].options.method, 'PUT');
+        assert.ok(requests[0].url.endsWith('/secrets'));
+        assert.equal(JSON.parse(requests[0].options.body).name, 'DATA_KEY');
+    }
+});
+
+test('HTTP 201 is not accepted by reads or D1 queries and incomplete success statuses remain rejected', async () => {
+    for (const status of [201, 202, 204, 206]) {
+        const client = nativeClient(config, context, 'synthetic-native-token', { fetchImpl: async () =>
+            status === 204 ? new Response(null, { status })
+                : Response.json({ success: true, result: [{ success: true, results: [] }] }, { status }) });
+        for (const operation of [
+            () => client.settings(), () => client.database(), () => client.bucket(), () => client.query('SELECT 1'),
+        ]) await assert.rejects(operation(), error => error.message.includes(`HTTP ${status}`));
+    }
+    for (const status of [202, 204, 206, 302, 403, 500]) {
+        const client = nativeClient(config, context, 'synthetic-native-token', { fetchImpl: async () =>
+            status === 204 ? new Response(null, { status })
+                : Response.json({ success: true, result: { name: 'DATA_KEY', type: 'secret_text' } }, { status }) });
+        await assert.rejects(client.createDataKey('a'.repeat(43) + '='), error => error.message.includes(`HTTP ${status}`));
+    }
+});
+
+test('secret success responses still validate JSON, success, name and type without leaking response values', async () => {
+    for (const status of [200, 201]) {
+        for (const response of [
+            new Response('private-response', { status }),
+            Response.json({ success: false, result: { name: 'DATA_KEY', type: 'secret_text' } }, { status }),
+            Response.json({ success: 'true', result: { name: 'DATA_KEY', type: 'secret_text' } }, { status }),
+            Response.json({ success: true }, { status }),
+            ...[null, {}, [], { name: 'private-response', type: 'secret_text' },
+                { name: 'DATA_KEY' }, { name: 'DATA_KEY', type: 'private-response' }]
+                .map(result => Response.json({ success: true, result }, { status })),
+        ]) {
+            const client = nativeClient(config, context, 'private-token', { fetchImpl: async () => response });
+            await assert.rejects(client.createDataKey('a'.repeat(43) + '='), error =>
+                !error.message.includes('private-response') && !error.message.includes('private-token'));
+        }
+    }
 });
 
 test('API permission, redirect, parse and network errors do not disclose response bodies or credentials', async () => {
@@ -331,7 +382,7 @@ test('credential capture is private and child-process failures never leak captur
         error => !error.message.includes(token));
 });
 
-async function releaseFixture(t, selectedConfig = config) {
+async function releaseFixture(t, selectedConfig = config, { secretStatus = 200 } = {}) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'stworkers-native-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const worker = path.join(root, 'cloudflare'), build = path.join(worker, '.build');
@@ -375,11 +426,11 @@ async function releaseFixture(t, selectedConfig = config) {
                 result = [{ success: true, results: await f.client.query(body.sql, body.params) }];
             } else if (url.endsWith('/secrets')) {
                 await f.client.createDataKey(JSON.parse(request.body).text);
-                result = {};
+                result = { name: 'DATA_KEY', type: 'secret_text' };
             } else if (url.includes('/d1/database/')) result = await f.client.database();
             else if (url.includes('/r2/buckets/')) result = await f.client.bucket();
             else throw new Error('Unexpected endpoint.');
-            return Response.json({ success: true, result });
+            return Response.json({ success: true, result }, { status: url.endsWith('/secrets') ? secretStatus : 200 });
         },
     };
     return { root, native, assets, actions, commands, requests, options, ...f };
@@ -412,6 +463,70 @@ test('native deploy preserves the platform preview bucket and the exact configur
     assert.ok(f.events.indexOf('migrate') < f.events.indexOf('key'));
     assert.ok(f.events.indexOf('key') < f.events.indexOf('upload'));
     assert.equal(f.keys.length, 1);
+});
+
+test('native deploy accepts secret creation HTTP 201 and rechecks the binding before uploading', async t => {
+    const f = await releaseFixture(t, config, { secretStatus: 201 });
+    const run = f.options.run;
+    f.options.run = (root, args) => {
+        if (args[1] === 'deploy') {
+            const created = f.requests.findIndex(request => request.method === 'PUT' && request.url.endsWith('/secrets'));
+            assert.ok(created >= 0);
+            assert.ok(f.requests.slice(created + 1).some(request => request.url.endsWith('/settings')));
+        }
+        return run(root, args);
+    };
+    const result = await deployNativeRelease(f.root, { ...env, CLOUDFLARE_API_TOKEN: 'synthetic-native-api-token' }, f.options);
+    assert.equal(result.initializedKey, true);
+    assert.equal(result.uploadCompleted, true);
+    assert.equal(result.bindingsVerified, true);
+    assert.equal(f.keys.length, 1);
+    assert.ok(f.events.indexOf('migrate') < f.events.indexOf('key'));
+    assert.ok(f.events.indexOf('key') < f.events.indexOf('upload'));
+});
+
+test('retry after a persisted but rejected secret acknowledgement reuses the key and preserves data', async t => {
+    const f = await releaseFixture(t, config, { secretStatus: 201 });
+    const fetchImpl = f.options.fetchImpl;
+    f.options.fetchImpl = async (url, options) => {
+        const response = await fetchImpl(url, options);
+        if (url.endsWith('/secrets')) {
+            await response.body.cancel();
+            return Response.json({ success: true, result: {} }, { status: 201 });
+        }
+        return response;
+    };
+    const selectedEnv = { ...env, CLOUDFLARE_API_TOKEN: 'synthetic-native-api-token' };
+    await assert.rejects(deployNativeRelease(f.root, selectedEnv, f.options), /upload started: false/);
+    assert.equal(f.keys.length, 1);
+    assert.ok(!f.events.includes('upload'));
+    assert.equal(JSON.parse(f.db.prepare("SELECT payload FROM stworkers_deployment_state WHERE id='initialization'")
+        .get().payload).status, 'pending');
+    f.db.prepare('INSERT INTO documents(kind,id,payload) VALUES(?,?,?)').run('settings', 'owner', '{"retained":[0,false,"value"]}');
+    const saved = f.db.prepare('SELECT * FROM documents').all();
+    const key = f.keys[0];
+    f.options.fetchImpl = fetchImpl;
+    f.client.createDataKey = async () => { throw new Error('Must not write a second key.'); };
+    const result = await deployNativeRelease(f.root, selectedEnv, f.options);
+    assert.equal(result.initializedKey, false);
+    assert.equal(result.existingKeyInherited, true);
+    assert.equal(result.uploadCompleted, true);
+    assert.deepEqual(f.keys, [key]);
+    assert.deepEqual(f.db.prepare('SELECT * FROM documents').all(), saved);
+    assert.equal(f.requests.filter(request => request.method === 'PUT' && request.url.endsWith('/secrets')).length, 1);
+    assert.equal(JSON.parse(f.db.prepare("SELECT payload FROM stworkers_deployment_state WHERE id='initialization'")
+        .get().payload).status, 'ready');
+});
+
+test('a valid secret HTTP 201 acknowledgement cannot upload without a confirmed secret binding', async t => {
+    const f = await releaseFixture(t, config, { secretStatus: 201 });
+    f.client.createDataKey = async () => {};
+    const selectedEnv = { ...env, CLOUDFLARE_API_TOKEN: 'synthetic-native-api-token' };
+    await assert.rejects(deployNativeRelease(f.root, selectedEnv, f.options), /Encryption-key initialization was not confirmed/);
+    assert.ok(!f.events.includes('upload'));
+    assert.deepEqual(f.keys, []);
+    await assert.rejects(deployNativeRelease(f.root, selectedEnv, f.options), /Restore the original key/);
+    assert.equal(f.requests.filter(request => request.method === 'PUT' && request.url.endsWith('/secrets')).length, 1);
 });
 
 test('native deploy rejects local/preview context, changed configuration and stale build metadata before remote requests', async t => {
