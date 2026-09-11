@@ -1,92 +1,37 @@
-name: Feature Request ✨
-type: Feature
-description: Suggest an idea for future development of this project. Please use English only.
-title: '[FEATURE_REQUEST] <title>'
-labels: ['🦄 Feature Request']
-
+name: 功能缺失与建议
+description: 提出 STWorkers 当前缺失的核心功能、兼容需求或部署与使用体验改进，支持中文。
+title: '[Feature] '
 body:
-
-  # Field 1 - Did the user searched for similar requests
-  - type: dropdown
-    id: similarRequest
+  - type: markdown
     attributes:
-      label: Have you searched for similar requests?
-      description:
-      options:
-        - 'No'
-        - 'Yes'
+      value: |
+        当前部署测试版不是 STWorkers 的最终形态，欢迎提出功能缺失和后续优化建议。
+        可先查看 [已有建议](https://github.com/begonia599/STWorkers/issues) 和 [项目目标](https://github.com/begonia599/STWorkers/blob/main/docs/GOALS.md)。
+        本地模型管理、服务端推理、语音、生图和公共多租户服务仍不在项目范围内。
+        提交建议不等于承诺全部采纳；请勿附上密码、Token、模型 API Key、DATA_KEY、Cookie 或私人聊天。
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景与当前缺失
+      description: 想完成什么操作？当前哪里缺少功能或使用不方便？无需提供技术方案。
     validations:
       required: true
 
-  # Field 2 - Is it bug-related
-  - type: textarea
-    id: issue
-    attributes:
-      label: Is your feature request related to a problem? If so, please describe.
-      description:
-      placeholder: A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
-    validations:
-      required: false
-
-  # Field 3 - Describe feature
   - type: textarea
     id: solution
     attributes:
-      label: Describe the solution you'd like
-      placeholder: An outline of how you would like this to be implemented, include as much details as possible
-    validations:
-      required: true
+      label: 期望的效果
+      description: 描述希望增加或改善的行为；也可以附上原版 ST 的操作方式或相关插件用法。
 
-  # Field 4 - Describe alternatives
   - type: textarea
     id: alternatives
     attributes:
-      label: Describe alternatives you've considered
-      placeholder: A clear and concise description of any alternative solutions or features you've considered.
-    validations:
-      required: false
+      label: 当前的临时办法
+      description: 如已有替代操作或绕过方式，可在这里说明，没有可留空。
 
-  # Field 5 - Additional context
   - type: textarea
-    id: addcontext
+    id: context
     attributes:
-      label: Additional context
-      placeholder: Add any other context or screenshots about the feature request here.
-    validations:
-      required: false
-
-  # Field 6 - Priority
-  - type: dropdown
-    id: priority
-    attributes:
-      label: Priority
-      description: How urgent is the development of this feature
-      options:
-        - Low (Nice-to-have)
-        - Medium (Would be very useful)
-        - High (The app does not function without it)
-    validations:
-      required: true
-
-  # Field 7 - Can the user user test in staging
-  - type: dropdown
-    id: canTestStaging
-    attributes:
-      label: Are you willing to test this on staging/unstable branch if this is implemented?
-      description: Otherwise you'll need to wait until the next stable release after the feature is developed.
-      options:
-        - 'No'
-        - 'Maybe'
-        - 'Yes'
-    validations:
-      required: false
-
-  # Final text
-  - type: markdown
-    attributes:
-      value: |-
-        ## Thanks 🙏
-        Thank you for your feature suggestion.
-        Please note that there is no guarantee that your idea will be implemented.
-    validations:
-      required: false
+      label: 补充资料
+      description: 可提供相关版本、公开链接、脱敏截图或有权分享的最小样例。
