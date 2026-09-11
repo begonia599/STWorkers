@@ -105,7 +105,7 @@ const bootstrap = {
     world_names: [],
     enable_extensions: true,
     enable_extensions_auto_update: false,
-    enable_accounts: false,
+    enable_accounts: true,
     request_compression: { enabled: false, minPayloadSize: 0, maxPayloadSize: 0, timeout: 0 },
     stworks: {
         backgrounds: defaultFiles.filter(file => file.relative.startsWith('backgrounds/'))

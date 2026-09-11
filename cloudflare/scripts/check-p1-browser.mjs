@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerStorageState } from './owner-client.mjs';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
@@ -14,7 +15,7 @@ const { AUTH_PASSWORD } = parseEnv(await readFile(new URL('../.dev.vars', import
 const browser = await chromium.launch({ headless: true, ...(process.argv[3] ? { executablePath: process.argv[3] } : {}) });
 try {
     const context = await browser.newContext({
-        httpCredentials: { username: 'owner', password: AUTH_PASSWORD },
+        storageState: await ownerStorageState('http://127.0.0.1:8789', AUTH_PASSWORD),
         viewport: { width: 1440, height: 1000 },
     });
     const page = await context.newPage();

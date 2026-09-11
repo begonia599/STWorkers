@@ -59,7 +59,7 @@ test('standalone process route returns the ST envelope without calling a model o
     assert.equal((await call('/api/backends/chat-completions/process', { type: '', messages: 'invalid' })).status, 400);
     assert.equal((await call('/api/backends/chat-completions/process')).status, 405);
     assert.equal((await call('/api/backends/chat-completions/process', { type: '', messages }, { 'X-CSRF-Token': 'invalid' })).status, 403);
-    assert.equal((await call('/api/backends/chat-completions/process', { type: '', messages }, { Authorization: 'Basic invalid' })).status, 401);
+    assert.equal((await call('/api/backends/chat-completions/process', { type: '', messages }, { Cookie: '' })).status, 401);
 });
 
 test('post-processing rejects unsupported media, oversized names and oversized expanded prompts', () => {

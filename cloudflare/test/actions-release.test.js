@@ -186,7 +186,7 @@ test('missing Workers, redirects, API failures, and invalid tokens never imply r
     }), error => !error.message.includes('secret-value'));
 });
 
-test('a checked update invokes only deploy, inherits secrets, disables provisioning, and rechecks bindings', async t => {
+test('a checked update migrates before deploy, inherits secrets, disables provisioning, and rechecks bindings', async t => {
     t.mock.method(console, 'log', () => {});
     const { root } = await fixture(t);
     const transport = remote(), commands = [];
@@ -195,15 +195,29 @@ test('a checked update invokes only deploy, inherits secrets, disables provision
         assert.equal(transport.requests.length, 3);
         commands.push(args);
     } });
-    assert.equal(commands.length, 1);
-    assert.equal(commands[0][1], 'deploy');
-    assert.ok(commands[0].includes('--strict'));
-    assert.ok(commands[0].includes('--x-auto-create=false'));
-    assert.ok(commands[0].includes('--no-x-provision'));
-    assert.ok(!commands[0].includes('--secrets-file'));
+    assert.equal(commands.length, 2);
+    assert.deepEqual(commands[0].slice(1, 6), ['d1', 'migrations', 'apply', 'DB', '--remote']);
+    assert.equal(commands[0].at(-1), commands[1][commands[1].indexOf('--config') + 1]);
+    assert.equal(commands[1][1], 'deploy');
+    assert.ok(commands[1].includes('--strict'));
+    assert.ok(commands[1].includes('--x-auto-create=false'));
+    assert.ok(commands[1].includes('--no-x-provision'));
+    assert.ok(!commands[1].includes('--secrets-file'));
     assert.ok(!JSON.stringify(commands).includes(env.CLOUDFLARE_API_TOKEN));
     assert.equal(transport.requests.length, 6);
     assert.equal(result.runtimeVerified, false);
+    assert.equal(result.migrationsCompleted, true);
+});
+
+test('an Actions migration failure cannot upload new code or expose captured output', async t => {
+    const { root } = await fixture(t);
+    const commands = [];
+    await assert.rejects(deployActionsRelease(root, env, { ...remote(), run: (_root, args) => {
+        commands.push(args);
+        throw new Error('synthetic private migration detail');
+    } }), error => /No Worker upload/.test(error.message) && !/private migration detail/.test(error.message));
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0][1], 'd1');
 });
 
 test('failed remote preflight cannot reach the deploy command', async t => {

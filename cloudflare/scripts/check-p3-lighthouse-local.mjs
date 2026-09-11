@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerStorageState } from './owner-client.mjs';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -86,7 +87,8 @@ async function until(callback, description) {
 }
 async function newTarget(side, base, credentials, mobile = false) {
     const context = await browser.newContext({
-        httpCredentials: { ...credentials, origin: base }, locale: 'en-US', serviceWorkers: 'block',
+        ...(side === 'worker' ? { storageState: await ownerStorageState(base, credentials.password) }
+            : { httpCredentials: { ...credentials, origin: base } }), locale: 'en-US', serviceWorkers: 'block',
         viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
         ...(mobile ? { isMobile: true, hasTouch: true } : {}),
     });
@@ -423,7 +425,7 @@ async function run() {
     preview.stdout.resume();
     preview.stderr.resume();
     await until(async () => {
-        try { return (await fetch(workerBase, { signal: AbortSignal.timeout(1000) })).status === 401; } catch { return false; }
+        try { return (await fetch(workerBase, { redirect: 'manual', signal: AbortSignal.timeout(1000) })).status === 302; } catch { return false; }
     }, 'Worker startup timeout');
     original = await startUpstreamBrowserServer(8802, { pluginBundle: bundle });
     evidence.original = original.evidence;

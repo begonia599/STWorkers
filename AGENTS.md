@@ -18,7 +18,8 @@ Read `docs/GOALS.md`, `docs/ROADMAP.md`, and `docs/COMPATIBILITY.md` before chan
 - Preserve request/response contracts, unknown fields, message swipes, variables, and event ordering.
 - Unsupported APIs must fail explicitly. Never fake success, data persistence, or extension versions.
 - Never copy user data, secrets, ignored extension directories, or local config into deployment assets.
-- Authentication must run before serving HTML, scripts, data, and APIs.
+- Authentication must run before application HTML, scripts, data, and APIs. The original login page,
+  its explicit static dependency allowlist, signed pre-login CSRF, and public login endpoints are the only anonymous exceptions.
 - Browser iframe scripts are privileged client-side code, not a server-side sandbox.
 - Keep database migrations additive and test data preservation.
 - Run `npm --prefix cloudflare test` and `npm --prefix cloudflare run build`.

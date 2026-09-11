@@ -107,7 +107,8 @@ async function schema(client) {
     const rows = await client.query(SELECT_TABLES);
     const names = rows.map(row => row.name);
     assert.ok(names.every(name => typeof name === 'string' && (
-        ['documents', STATE_TABLE, 'd1_migrations'].includes(name) || name.startsWith('sqlite_') || name.startsWith('_cf_'))),
+        ['documents', STATE_TABLE, 'd1_migrations', 'stworkers_accounts', 'stworkers_sessions',
+            'stworkers_login_limits'].includes(name) || name.startsWith('sqlite_') || name.startsWith('_cf_'))),
     'The selected database has unrelated tables. Select a new database; do not adopt unrelated data.');
     return new Set(names);
 }
@@ -137,9 +138,12 @@ export async function initializeAndDeploy(config, context, lock, client, {
     const tables = await schema(client);
     const count = tables.has('documents') ? (await client.query('SELECT count(*) AS count FROM documents'))[0]?.count : 0;
     assert.ok(Number.isSafeInteger(count) && count >= 0, 'Cannot verify existing document count.');
+    const accounts = tables.has('stworkers_accounts')
+        ? (await client.query('SELECT count(*) AS count FROM stworkers_accounts'))[0]?.count : 0;
+    assert.ok(Number.isSafeInteger(accounts) && accounts >= 0, 'Cannot verify existing account count.');
     const initialization = tables.has(STATE_TABLE) ? await state(client, 'initialization') : null;
     if (!initial.hasDataKey) {
-        assert.ok(count === 0 && initialization === null,
+        assert.ok(count === 0 && accounts === 0 && initialization === null,
             'DATA_KEY is missing but data or an initialization claim exists. Restore the original key; never regenerate it.');
     }
     await migrate();
@@ -148,6 +152,7 @@ export async function initializeAndDeploy(config, context, lock, client, {
         const claim = JSON.stringify({ schema: 1, status: 'pending', buildId: context.buildId });
         const inserted = await client.query(`INSERT INTO ${STATE_TABLE} (id, payload)
             SELECT 'initialization', ? WHERE NOT EXISTS (SELECT 1 FROM documents)
+            AND NOT EXISTS (SELECT 1 FROM stworkers_accounts)
             ON CONFLICT(id) DO NOTHING RETURNING id`, [claim]);
         assert.ok(inserted.length === 1,
             'Another initialization is pending or data appeared. No encryption key was generated or replaced.');

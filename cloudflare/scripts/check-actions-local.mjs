@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient, ownerStorageState } from './owner-client.mjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { cp, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
@@ -19,7 +20,7 @@ const { chromium } = require('playwright');
 const password = randomBytes(36).toString('base64url');
 const withFixture = process.argv[4] === '--with-list-fixture';
 const selected = [...PLUGIN_BASELINES];
-const headers = { Authorization: `Basic ${Buffer.from(`owner:${password}`).toString('base64')}` };
+let headers;
 const evidence = { scope: 'Local Actions build output in isolated workerd/D1/R2. Not a GitHub-hosted or cloud deployment test.',
     startedAt: new Date().toISOString(), checks: [], workerOutbound: [], pageErrors: [], httpErrors: [],
     pluginManagementRequests: [], screenshots: [] };
@@ -90,7 +91,8 @@ try {
         await database.batch(statements.map(sql => database.prepare(sql)));
     }
     base = (await runtime.ready).origin;
-    assert.equal((await fetch(base)).status, 401);
+    assert.equal((await fetch(base, { redirect: 'manual' })).status, 302);
+    headers = (await ownerClient(base, password)).headers;
     const discovered = await (await fetch(base + '/api/extensions/discover', { headers })).json();
     for (const plugin of selected) {
         const prefix = `/scripts/extensions/third-party/${plugin.id}/`;
@@ -111,7 +113,7 @@ try {
     browser = await chromium.launch({ executablePath: process.argv[3], headless: true });
     async function pageFor(mobile) {
         const context = await browser.newContext({
-            httpCredentials: { username: 'owner', password, origin: base }, locale: 'en-US', serviceWorkers: 'block',
+            storageState: await ownerStorageState(base, password), locale: 'en-US', serviceWorkers: 'block',
             viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
             ...(mobile ? { isMobile: true, hasTouch: true } : {}),
         });

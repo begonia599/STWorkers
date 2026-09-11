@@ -3,7 +3,6 @@ import test from 'node:test';
 import { modelEndpoint, generationBody } from '../src/generation.js';
 import { harness } from './p1-helper.js';
 import worker from '../src/index.js';
-import { csrfToken } from '../src/auth.js';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { setImmediate } from 'node:timers/promises';
@@ -132,10 +131,10 @@ test('unsupported options and malformed/expansive YAML fail explicitly', () => {
 });
 
 test('nonstream response and custom headers are preserved without forwarding browser credentials', async t => {
-    const { call, calls } = await setup(t);
+    const { call, calls, client } = await setup(t);
     const response = await call(`${path}generate`, {
         ...input, custom_include_headers: 'X-Model-Option: test\nAuthorization: Bearer synthetic-custom',
-    }, { Cookie: 'private-owner-cookie', 'X-Private-Browser-Header': 'private' });
+    }, { Cookie: `${client.cookie}; extra=private-owner-cookie`, 'X-Private-Browser-Header': 'private' });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), completion);
     assert.equal(calls.length, 1);
@@ -325,15 +324,14 @@ test('cancellation during a pending stream read never enqueues an error into a c
 test('incoming abort cancels a pending upstream request with no retry', async t => {
     let started;
     const ready = new Promise(resolve => { started = resolve; });
-    const { env, calls } = await setup(t, (_url, options) => new Promise((_resolve, reject) => {
+    const { env, calls, client } = await setup(t, (_url, options) => new Promise((_resolve, reject) => {
         options.signal.addEventListener('abort', () => reject(new Error('private transport detail')), { once: true });
         started();
     }));
     const controller = new AbortController();
     const request = new Request(`https://stworks.example${path}generate`, {
         method: 'POST', signal: controller.signal, body: JSON.stringify(input),
-        headers: { Authorization: `Basic ${btoa(`owner:${env.AUTH_PASSWORD}`)}`, 'Content-Type': 'application/json',
-            'X-CSRF-Token': await csrfToken(new Request('https://stworks.example'), env) },
+        headers: { ...client.headers, 'Content-Type': 'application/json' },
     });
     const pending = worker.fetch(request, env);
     await ready;

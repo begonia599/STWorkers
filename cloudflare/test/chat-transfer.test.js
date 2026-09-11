@@ -205,7 +205,7 @@ test('new chat routes retain authentication, CSRF, origin and method protections
     const avatar = await importCard();
     for (const path of ['/api/chats/import', '/api/chats/rename', '/api/chats/search']) {
         const body = path.endsWith('/import') ? importForm(avatar) : renameBody(avatar);
-        assert.equal((await call(path, body, { Authorization: '' })).status, 401);
+        assert.equal((await call(path, body, { Cookie: '' })).status, 401);
         assert.equal((await call(path, body, { 'X-CSRF-Token': '' })).status, 403);
         assert.equal((await call(path, body, { Origin: 'https://foreign.example' })).status, 403);
         assert.equal((await call(path)).status, 405);

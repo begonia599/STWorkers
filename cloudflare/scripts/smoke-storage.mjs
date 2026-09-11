@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient } from './owner-client.mjs';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
@@ -9,10 +10,10 @@ if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || base.usernam
 }
 const { AUTH_PASSWORD } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
 assert.ok(AUTH_PASSWORD?.length >= 24);
-const authorization = `Basic ${Buffer.from(`owner:${AUTH_PASSWORD}`).toString('base64')}`;
+const owner = await ownerClient(base, process.env.STWORKERS_TEST_PASSWORD || AUTH_PASSWORD);
 const send = (pathname, options = {}) => fetch(new URL(pathname, base), {
     ...options, signal: AbortSignal.timeout(20000),
-    headers: { Authorization: authorization, ...options.headers },
+    headers: { ...owner.headers, ...options.headers },
 });
 const { token } = await (await send('/csrf-token')).json();
 const post = (pathname, value, headers = {}) => send(pathname, {

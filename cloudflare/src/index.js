@@ -1,4 +1,4 @@
-import { authenticate, csrfToken, validateCsrf } from './auth.js';
+import { access } from './auth.js';
 import { STATUS, EXCLUDED_API_PREFIXES } from './capabilities.js';
 import { HttpError, jsonError, protectResponse } from './http.js';
 import { handleSettings } from './settings.js';
@@ -13,7 +13,6 @@ import { handleExtensions, extensionAsset } from './extensions.js';
 
 const ROUTES = new Map([
     ['/api/stworks/status', ['GET', () => Response.json(STATUS)]],
-    ['/csrf-token', ['GET', async (request, env) => Response.json({ token: await csrfToken(request, env) })]],
     ['/api/ping', ['POST', () => new Response('ok')]],
     ['/version', ['GET', handleStartup]],
     ['/api/extensions/discover', ['GET', handleExtensions]],
@@ -83,17 +82,21 @@ async function route(request, env) {
 export default {
     async fetch(request, env) {
         try {
-            const challenge = await authenticate(request, env);
-            if (challenge) return protectResponse(challenge);
-            await validateCsrf(request, env);
+            const gate = await access(request, env);
+            if (gate.response) return protectResponse(gate.response);
             return protectResponse(await route(request, env));
         } catch (error) {
             if (error instanceof HttpError) {
-                return protectResponse(jsonError(error.status, error.code, error.message));
+                const account = new URL(request.url).pathname.startsWith('/api/users/');
+                return protectResponse(account
+                    ? Response.json({ error: error.message, code: error.code }, { status: error.status })
+                    : jsonError(error.status, error.code, error.message));
             }
             // Never include data, request headers, credentials, or database errors in responses.
             console.error('STworks request failed with an internal error.');
-            return protectResponse(jsonError(500, 'INTERNAL_ERROR', 'The request could not be completed.'));
+            return protectResponse(new URL(request.url).pathname.startsWith('/api/users/')
+                ? Response.json({ error: 'The account request could not be completed.' }, { status: 500 })
+                : jsonError(500, 'INTERNAL_ERROR', 'The request could not be completed.'));
         }
     },
 };

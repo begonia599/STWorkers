@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { ownerClient } from './owner-client.mjs';
 import { randomUUID, createHash } from 'node:crypto';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -27,22 +28,20 @@ try {
         bindings: { AUTH_PASSWORD: password },
     }));
     const db = await runtime.getD1Database('DB');
-    for (const file of ['0001_documents.sql', '0002_character_chat_links.sql']) {
+    for (const file of (await readdir(new URL('../migrations/', import.meta.url))).filter(file => file.endsWith('.sql')).sort()) {
         const sql = await readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8');
         await db.batch(splitSqlQuery(sql).map(statement => db.prepare(statement)));
     }
     for (const [name, url] of [['miniflare-entry', await runtime.ready],
         ['workerd-direct', await runtime.unsafeGetDirectURL('stworks-cancellation-probe')]]) {
         const base = url.origin;
-        const authorization = `Basic ${Buffer.from(`owner:${password}`).toString('base64')}`;
-        assert.equal((await fetch(`${base}/csrf-token`)).status, 401);
-        const { token } = await (await fetch(`${base}/csrf-token`, { headers: { Authorization: authorization } })).json();
+        const owner = await ownerClient(base, password);
         const index = model.records.worker.length;
         model.plan('worker', name, { mode: 'headers-pending' });
         const controller = new AbortController();
         const request = fetch(`${base}/api/backends/chat-completions/generate`, {
             method: 'POST', signal: controller.signal,
-            headers: { Authorization: authorization, Origin: base, 'X-CSRF-Token': token, 'Content-Type': 'application/json' },
+            headers: { ...owner.headers, 'Content-Type': 'application/json' },
             body: JSON.stringify({ chat_completion_source: 'custom', custom_url: `${origin}/worker/v1`,
                 model: 'p3-generation-fixture', stream: true, messages: [{ role: 'user', content: 'P3 pending headers' }] }),
         }).then(response => ({ status: response.status }), error => ({ error: error.name }));

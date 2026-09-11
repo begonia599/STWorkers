@@ -205,6 +205,13 @@ export async function deployActionsRelease(workerRoot, env, { fetchImpl = fetch,
     'Save the generated plugin lock on the current default branch before deployment.');
     await checkAssets(root, config, env.CLOUDFLARE_API_TOKEN ? { token: env.CLOUDFLARE_API_TOKEN } : {}, lock.plugins);
     await checkExistingInstance(config, env.CLOUDFLARE_API_TOKEN, { fetchImpl });
+    try {
+        await run(root, ['node_modules/wrangler/bin/wrangler.js', 'd1', 'migrations', 'apply', 'DB',
+            '--remote', '--config', configFile], env);
+    } catch {
+        throw new Error('D1 migration did not complete. No Worker upload was attempted. '
+            + 'Inspect migration state before retrying; never delete data or replace DATA_KEY.');
+    }
     // Omit --secrets-file: required secret bindings must inherit their existing values.
     await run(root, ['node_modules/wrangler/bin/wrangler.js', 'deploy', '--config', configFile,
         '--strict', '--x-auto-create=false', '--no-x-provision',
@@ -213,7 +220,7 @@ export async function deployActionsRelease(workerRoot, env, { fetchImpl = fetch,
     try { checked = await checkExistingInstance(config, env.CLOUDFLARE_API_TOKEN, { fetchImpl }); }
     catch { throw new Error('Deployment command completed, but post-deployment binding checks failed. Check Cloudflare before retrying. No rollback was attempted.'); }
     await summary(env, 'Deployment command completed and resource bindings were checked again. '
-        + 'Existing secret values were inherited, not initialized or replaced. '
+        + 'Additive D1 migrations completed before upload. Existing secret values were inherited, not initialized or replaced. '
         + 'Cloud browser, model, compatibility, and free-resource acceptance still require separate testing.');
-    return { deploymentCommandCompleted: true, ...checked, runtimeVerified: false };
+    return { deploymentCommandCompleted: true, migrationsCompleted: true, ...checked, runtimeVerified: false };
 }

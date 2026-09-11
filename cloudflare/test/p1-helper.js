@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { makeD1 } from './d1-helper.js';
-import { csrfToken } from '../src/auth.js';
+import { loginClient } from './auth-helper.js';
 import worker from '../src/index.js';
 
 export const defaultPng = readFileSync(new URL('../../public/img/ai4.png', import.meta.url));
@@ -62,13 +62,13 @@ export async function harness(t) {
             },
         },
     };
-    const token = await csrfToken(new Request(origin), env);
+    const client = await loginClient(env);
     const call = (path, body, extra = {}) => {
         const form = body instanceof FormData;
         return worker.fetch(new Request(origin + path, {
             method: body === undefined ? 'GET' : 'POST',
             headers: {
-                Authorization: `Basic ${btoa(`owner:${password}`)}`, Origin: origin, 'X-CSRF-Token': token,
+                ...client.headers,
                 ...(!form && body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...extra,
             },
             ...(body !== undefined ? { body: form ? body : JSON.stringify(body) } : {}),
@@ -82,5 +82,5 @@ export async function harness(t) {
         if (response.status !== 200) throw new Error(`Import failed: ${await response.text()}`);
         return `${(await response.json()).file_name}.png`;
     };
-    return { env, call, importCard };
+    return { env, call, importCard, client };
 }

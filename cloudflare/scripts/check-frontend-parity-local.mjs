@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerStorageState } from './owner-client.mjs';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -66,7 +67,9 @@ function initialChat() {
 }
 
 async function openTarget(side, base, credentials, viewport = { width: 1440, height: 1000 }) {
-    const context = await browser.newContext({ httpCredentials: credentials, locale: 'en-US', viewport,
+    const context = await browser.newContext({ ...(side === 'worker'
+        ? { storageState: await ownerStorageState(base, credentials.password) }
+        : { httpCredentials: credentials }), locale: 'en-US', viewport,
         serviceWorkers: 'block', ...(viewport.width < 500 ? { isMobile: true, hasTouch: true } : {}) });
     context.setDefaultTimeout(25000);
     await context.route('**/*', route => {
@@ -285,11 +288,10 @@ async function run() {
     { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     preview.stdout.resume();
     preview.stderr.resume();
-    const authorization = `Basic ${Buffer.from(`owner:${AUTH_PASSWORD}`).toString('base64')}`;
     let ready = false;
     for (let i = 0; i < 80; i++) {
         try {
-            const response = await fetch(`${workerBase}/api/stworks/status`, { headers: { Authorization: authorization }, signal: AbortSignal.timeout(1000) });
+            const response = await fetch(`${workerBase}/csrf-token`, { signal: AbortSignal.timeout(1000) });
             if (response.ok) { ready = true; break; }
         } catch { /* Starting the isolated Worker. */ }
         await delay(500);

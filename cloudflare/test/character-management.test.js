@@ -76,7 +76,7 @@ test('persona upload, replacement, authenticated images, thumbnail and deletion 
     const url = `/User%20Avatars/${encodeURIComponent(path)}`;
     assert.deepEqual(Buffer.from(await (await call(url)).arrayBuffer()), Buffer.from(image));
     assert.deepEqual(Buffer.from(await (await call(`/thumbnail?type=persona&file=${encodeURIComponent(path)}`)).arrayBuffer()), Buffer.from(image));
-    assert.equal((await call(url, undefined, { Authorization: '' })).status, 401);
+    assert.equal((await call(url, undefined, { Cookie: '' })).status, 401);
     const overwritten = await call('/api/avatars/upload', upload({ overwrite_name: path }, defaultPng));
     assert.deepEqual(await overwritten.json(), { path });
     assert.deepEqual(Buffer.from(await (await call(url)).arrayBuffer()), defaultPng);
@@ -121,7 +121,7 @@ test('avatar endpoints reject missing images, unprocessed crops, invalid paths, 
 test('new character and persona mutation routes require authentication, CSRF and same origin', async t => {
     const { call } = await harness(t);
     for (const path of ['/api/avatars/upload', '/api/avatars/delete', '/api/characters/edit-avatar', '/api/characters/rename']) {
-        assert.equal((await call(path, {}, { Authorization: '' })).status, 401);
+        assert.equal((await call(path, {}, { Cookie: '' })).status, 401);
         assert.equal((await call(path, {}, { 'X-CSRF-Token': '' })).status, 403);
         assert.equal((await call(path, {}, { Origin: 'https://foreign.example' })).status, 403);
     }

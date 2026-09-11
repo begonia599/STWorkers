@@ -47,6 +47,7 @@ export async function settingsResponse(request, env) {
     data.quickReplyPresets = [...replies.values()];
     return Response.json({
         ...data,
+        enable_accounts: true,
         settings: saved === null ? data.settings : JSON.stringify(saved.value),
     }, { headers: { ETag: `"${saved?.revision ?? 0}"` } });
 }

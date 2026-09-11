@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient } from './owner-client.mjs';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -12,10 +13,10 @@ const { chromium } = require('playwright');
 const { AUTH_PASSWORD } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
 const output = new URL('../.build/chat-transfer-browser/', import.meta.url);
 await mkdir(output, { recursive: true });
-const authorization = `Basic ${Buffer.from(`owner:${AUTH_PASSWORD}`).toString('base64')}`;
+const owner = await ownerClient(base, AUTH_PASSWORD);
 const send = (pathname, options = {}) => fetch(new URL(pathname, base), {
     ...options, signal: AbortSignal.timeout(20000),
-    headers: { Authorization: authorization, ...options.headers },
+    headers: { ...owner.headers, ...options.headers },
 });
 const { token } = await (await send('/csrf-token')).json();
 const post = (pathname, body) => send(pathname, {
@@ -58,7 +59,7 @@ try {
     avatar = `${(await response.json()).file_name}.png`;
     browser = await chromium.launch({ headless: true, ...(process.argv[3] ? { executablePath: process.argv[3] } : {}) });
     const options = {
-        httpCredentials: { username: 'owner', password: AUTH_PASSWORD },
+        storageState: owner.storageState(),
         viewport: { width: 1440, height: 1000 },
     };
     const context = await browser.newContext(options);

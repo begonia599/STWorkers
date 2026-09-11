@@ -70,7 +70,8 @@ async function getCurrentUser() {
         }
 
         currentUser = await response.json();
-        $('#admin_button').toggle(accountsEnabled && isAdmin());
+        // A Workers owner retains global plugin privileges without a multi-user administration panel.
+        $('#admin_button').toggle(accountsEnabled && isAdmin() && !currentUser.singleOwner);
     } catch (error) {
         console.error('Error getting current user:', error);
     }
@@ -296,7 +297,7 @@ async function backupUserData(handle, callback) {
 async function changePassword(handle, callback) {
     try {
         const template = $(await renderTemplateAsync('changePassword'));
-        template.find('.currentPasswordBlock').toggle(!isAdmin());
+        template.find('.currentPasswordBlock').toggle(!isAdmin() || currentUser?.singleOwner === true);
         let newPassword = '';
         let confirmPassword = '';
         let oldPassword = '';
@@ -859,10 +860,18 @@ async function openAdminPanel() {
  * @returns {Promise<void>}
  */
 async function logout() {
-    await fetch('/api/users/logout', {
-        method: 'POST',
-        headers: getRequestHeaders({ omitContentType: true }),
-    });
+    try {
+        const response = await fetch('/api/users/logout', {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+        });
+        if (!response.ok && response.status !== 401) {
+            throw new Error('The server could not end the session.');
+        }
+    } catch (error) {
+        toastr.error(String(error), 'Logout failed');
+        return;
+    }
 
     // On an explicit logout stop auto login
     // to allow user to change username even

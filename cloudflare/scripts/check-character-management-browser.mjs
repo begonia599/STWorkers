@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient } from './owner-client.mjs';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -10,12 +11,12 @@ const base = 'http://127.0.0.1:8789';
 const require = createRequire(process.argv[2] ?? new URL('../package.json', import.meta.url));
 const { chromium } = require('playwright');
 const { AUTH_PASSWORD } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
-const authorization = `Basic ${Buffer.from(`owner:${AUTH_PASSWORD}`).toString('base64')}`;
+const owner = await ownerClient(base, AUTH_PASSWORD);
 const output = new URL('../.build/character-management-browser/', import.meta.url);
 await mkdir(output, { recursive: true });
 const send = (pathname, options = {}) => fetch(new URL(pathname, base), {
     ...options, signal: AbortSignal.timeout(20000),
-    headers: { Authorization: authorization, ...options.headers },
+    headers: { ...owner.headers, ...options.headers },
 });
 const { token } = await (await send('/csrf-token')).json();
 const post = (pathname, body) => send(pathname, {
@@ -59,7 +60,7 @@ try {
     assert.equal((await post('/api/characters/merge-attributes', { avatar, chat: chatFile })).status, 200);
     browser = await chromium.launch({ headless: true, ...(process.argv[3] ? { executablePath: process.argv[3] } : {}) });
     const options = {
-        httpCredentials: { username: 'owner', password: AUTH_PASSWORD },
+        storageState: owner.storageState(),
         locale: 'en-US',
         viewport: { width: 1440, height: 1000 },
     };

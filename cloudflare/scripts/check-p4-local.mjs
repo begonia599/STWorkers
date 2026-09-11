@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient, ownerStorageState } from './owner-client.mjs';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -23,7 +24,7 @@ const fixtureUrl = `https://github.com/${fixture.project}`;
 const failedDeleteStage = 'A rejected delete stays visible and does not report success or reload';
 const evidence = { startedAt: new Date().toISOString(), scope: 'Isolated local workerd, D1 and R2; not a cloud or free-plan performance test.',
     downloadMode, checkpoints: [], network: [], apiResponses: [], pageErrors: [], consoleErrors: [], httpErrors: [], screenshots: [] };
-let runtime, browser, page, base, db, stage = 'start';
+let runtime, browser, page, base, db, owner, stage = 'start';
 const mark = name => { stage = name; evidence.checkpoints.push(name); console.log(name); };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 function fixtureArchive(commit) {
@@ -80,7 +81,7 @@ async function outbound(request) {
     } });
 }
 async function send(route, data) {
-    const headers = { Authorization: `Basic ${Buffer.from(`owner:${password}`).toString('base64')}` };
+    const headers = owner.headers;
     if (data === undefined) return fetch(base + route, { headers });
     const { token } = await (await fetch(base + '/csrf-token', { headers })).json();
     return fetch(base + route, { method: 'POST',
@@ -92,7 +93,7 @@ async function api(route, data) {
     return response;
 }
 async function newPage(mobile = false) {
-    const context = await browser.newContext({ httpCredentials: { username: 'owner', password, origin: base },
+    const context = await browser.newContext({ storageState: await ownerStorageState(base, password),
         viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 },
         locale: 'en-US', serviceWorkers: 'block', isMobile: mobile, hasTouch: mobile });
     const target = await context.newPage();
@@ -178,6 +179,7 @@ try {
         await db.batch(wrangler.unstable_splitSqlQuery(sql).map(statement => db.prepare(statement)));
     }
     base = (await runtime.ready).origin;
+    owner = await ownerClient(base, password);
     assert.equal((await fetch(base + '/api/extensions/discover')).status, 401);
     assert.equal((await (await api('discover')).json()).filter(item => item.name.startsWith('third-party/')).length, 0);
     browser = await chromium.launch({ executablePath: process.argv[3], headless: true });

@@ -148,6 +148,20 @@ test('missing encryption key with existing documents is rejected before migratio
     assert.ok(!f.events.includes('migrate') && !f.events.includes('key') && !f.events.includes('upload'));
 });
 
+test('native upgrades recognize account tables and never replace a missing key for an existing owner', async t => {
+    const f = fixture(t, { initialized: true });
+    await f.hooks.migrate();
+    f.db.prepare(`INSERT INTO stworkers_accounts
+        (handle,name,avatar,password_hash,salt,bootstrap_hash,version,created)
+        VALUES ('owner','Retained','','hash','salt','bootstrap',3,1)`).run();
+    const account = f.db.prepare('SELECT * FROM stworkers_accounts').get();
+    await initializeAndDeploy(config, context, lock, f.client, f.hooks);
+    assert.deepEqual(f.db.prepare('SELECT * FROM stworkers_accounts').get(), account);
+    f.bindings.splice(f.bindings.findIndex(binding => binding.name === 'DATA_KEY'), 1);
+    await assert.rejects(initializeAndDeploy(config, context, lock, f.client, f.hooks), /Restore the original key/);
+    assert.deepEqual(f.keys, []);
+});
+
 test('missing owner secret, wrong resource names, and unrelated database tables cannot trigger initialization', async t => {
     for (const mutate of [
         f => f.bindings.shift(),

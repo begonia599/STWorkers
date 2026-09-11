@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerStorageState } from './owner-client.mjs';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -50,7 +51,9 @@ async function until(callback, description) {
     throw new Error(description);
 }
 async function newTarget(side, base, credentials, viewport = { width: 1440, height: 1000 }) {
-    const context = await browser.newContext({ httpCredentials: { ...credentials, origin: base }, viewport,
+    const context = await browser.newContext({ ...(side === 'worker'
+        ? { storageState: await ownerStorageState(base, credentials.password) }
+        : { httpCredentials: { ...credentials, origin: base } }), viewport,
         locale: 'en-US', serviceWorkers: 'block', ...(viewport.width < 500 ? { isMobile: true, hasTouch: true } : {}) });
     context.setDefaultTimeout(30000);
     await context.route('**/*', route => {
@@ -298,7 +301,7 @@ async function run() {
     preview.stdout.resume();
     preview.stderr.resume();
     await until(async () => {
-        try { return (await fetch(`${workerBase}/`, { signal: AbortSignal.timeout(1000) })).status === 401; }
+        try { return (await fetch(`${workerBase}/`, { redirect: 'manual', signal: AbortSignal.timeout(1000) })).status === 302; }
         catch { return false; }
     }, 'P3 generation Worker did not start.');
     original = await startUpstreamBrowserServer(8799, { pluginBundle: bundle });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient } from './owner-client.mjs';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { parseEnv } from 'node:util';
@@ -9,18 +10,18 @@ if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) || base.usernam
 }
 const { AUTH_PASSWORD: password } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
 assert.ok(password?.length >= 24, 'Run setup:local before this test.');
-const authorization = `Basic ${Buffer.from(`owner:${password}`).toString('base64')}`;
+const owner = await ownerClient(base, process.env.STWORKERS_TEST_PASSWORD || password);
 const authenticatedFetch = (pathname, options = {}) => fetch(new URL(pathname, base), {
     ...options,
-    headers: { Authorization: authorization, ...options.headers },
+    headers: { ...owner.headers, ...options.headers },
 });
 
-assert.equal((await fetch(new URL('/', base))).status, 401);
+assert.equal((await fetch(new URL('/', base), { redirect: 'manual' })).status, 302);
 const statusResponse = await authenticatedFetch('/api/stworks/status');
 assert.equal(statusResponse.status, 200);
 const status = await statusResponse.json();
 assert.equal(status.readyForChat, false);
-assert.equal(status.phase, 'P3-in-progress');
+assert.equal(status.phase, 'P4-in-progress');
 assert.equal(status.compatibility.tavernHelper, 'pinned-local-synthetic-partial');
 assert.equal(status.compatibility.communityCards, 'not-yet-verified');
 const csrfResponse = await authenticatedFetch('/csrf-token');
@@ -55,7 +56,7 @@ try {
     assert.equal((await post('/api/settings/save', originalSettings)).status, 200, 'Restore original local settings.');
 }
 
-assert.equal((await post('/api/extensions/install', {})).status, 501);
+assert.equal((await post('/api/extensions/install', {})).status, 400);
 assert.equal((await post('/api/sd/generate', {})).status, 410);
 const index = await authenticatedFetch('/');
 assert.equal(index.status, 200);

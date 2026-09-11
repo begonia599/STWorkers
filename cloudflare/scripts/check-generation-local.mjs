@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient } from './owner-client.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
@@ -16,7 +17,7 @@ const base = 'http://127.0.0.1:8790';
 const require = createRequire(process.argv[2] ?? new URL('../package.json', import.meta.url));
 const { chromium } = require('playwright');
 const { AUTH_PASSWORD } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
-const auth = `Basic ${Buffer.from(`owner:${AUTH_PASSWORD}`).toString('base64')}`;
+let owner;
 await mkdir(output, { recursive: true });
 const modelRequests = [];
 const referenceRequests = [];
@@ -99,14 +100,15 @@ const run = async () => {
     preview.stdout.resume();
     preview.stderr.resume();
     const send = (pathname, options = {}) => fetch(`${base}${pathname}`, {
-        ...options, signal: AbortSignal.timeout(10000), headers: { Authorization: auth, ...options.headers },
+        ...options, signal: AbortSignal.timeout(10000), headers: { ...owner?.headers, ...options.headers },
     });
     let ready = false;
     for (let i = 0; i < 60; i++) {
-        try { if ((await send('/api/stworks/status')).ok) { ready = true; break; } } catch { /* Starting workerd. */ }
+        try { if ((await send('/csrf-token')).ok) { ready = true; break; } } catch { /* Starting workerd. */ }
         await delay(500);
     }
     assert.ok(ready, 'Isolated local preview did not start.');
+    owner = await ownerClient(base, AUTH_PASSWORD);
     const { token } = await (await send('/csrf-token')).json();
     const post = async (pathname, body) => {
         const response = await send(pathname, { method: 'POST',
@@ -156,7 +158,7 @@ const run = async () => {
     assert.equal(imported.status, 200);
     const avatar = `${(await imported.json()).file_name}.png`;
     browser = await chromium.launch({ headless: true, ...(process.argv[3] ? { executablePath: process.argv[3] } : {}) });
-    const options = { httpCredentials: { username: 'owner', password: AUTH_PASSWORD }, locale: 'en-US', viewport: { width: 1440, height: 1000 } };
+    const options = { storageState: owner.storageState(), locale: 'en-US', viewport: { width: 1440, height: 1000 } };
     const context = await browser.newContext(options);
     context.setDefaultTimeout(20000);
     const observe = target => {

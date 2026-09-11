@@ -1,5 +1,6 @@
 # Run npm run setup:local to generate your own local-only password.
 # Never reuse this example or a development password in production.
+# This is the bootstrap/recovery secret. Later password changes use the original account panel.
 AUTH_PASSWORD=replace-with-a-random-password-at-least-24-characters-long
 # setup:local also generates a separate 32-byte base64 DATA_KEY. Do not replace an existing key.
 # Configure HTTPS model URLs and model API keys in the original frontend.

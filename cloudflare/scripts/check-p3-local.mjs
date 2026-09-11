@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient, ownerStorageState } from './owner-client.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -18,7 +19,7 @@ const { chromium } = require('playwright');
 const { AUTH_PASSWORD } = parseEnv(await readFile(new URL('../.dev.vars', import.meta.url), 'utf8'));
 const base = 'http://127.0.0.1:8796', modelBase = 'http://127.0.0.1:8797';
 const persistence = `.wrangler/p3-test/${randomUUID()}`;
-const auth = `Basic ${Buffer.from(`owner:${AUTH_PASSWORD}`).toString('base64')}`;
+let owner;
 const evidence = { plugins: PLUGIN_BASELINES.map(({ id, commit, version }) => ({ id, commit, version })),
     stages: [], requests: [], failures: [], pageErrors: [], consoleErrors: [], external: [], tokenRequests: [],
     consoleTail: [], statusCancellations: [] };
@@ -40,7 +41,7 @@ const model = createServer(async (req, res) => {
         .end(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }] }));
 });
 const send = (pathname, options = {}) => fetch(`${base}${pathname}`, {
-    ...options, signal: AbortSignal.timeout(15000), headers: { Authorization: auth, ...options.headers },
+    ...options, signal: AbortSignal.timeout(15000), headers: { ...owner?.headers, ...options.headers },
 });
 async function waitFor(callback, message) {
     for (let i = 0; i < 100; i++) {
@@ -51,7 +52,7 @@ async function waitFor(callback, message) {
 }
 
 async function openPage(viewport) {
-    const context = await browser.newContext({ httpCredentials: { username: 'owner', password: AUTH_PASSWORD, origin: base },
+    const context = await browser.newContext({ storageState: await ownerStorageState(base, AUTH_PASSWORD),
         viewport, locale: 'en-US', serviceWorkers: 'block', ...(viewport.width < 500 ? { isMobile: true, hasTouch: true } : {}) });
     context.setDefaultTimeout(30000);
     const allowed = new Set([
@@ -127,10 +128,11 @@ async function run() {
     preview.stderr.resume();
     let ready = false;
     for (let i = 0; i < 80; i++) {
-        try { if ((await send('/api/stworks/status')).ok) { ready = true; break; } } catch { /* Starting. */ }
+        try { if ((await send('/csrf-token')).ok) { ready = true; break; } } catch { /* Starting. */ }
         await delay(500);
     }
     assert.ok(ready, 'P3 preview did not start.');
+    owner = await ownerClient(base, AUTH_PASSWORD);
     const { token } = await (await send('/csrf-token')).json();
     post = async (pathname, data) => {
         const response = await send(pathname, { method: 'POST',

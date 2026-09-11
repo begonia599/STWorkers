@@ -78,11 +78,14 @@ P1 的角色原图与完整 JSONL 聊天快照写入 R2。聊天先写新对象�
 
 ## 访问保护
 
-P0 使用 HTTPS 下的单所有者 HTTP Basic 认证，不是最终上手界面。
-所有请求先进入 Worker，缺少强密码时拒绝服务，不存在生产免认证模式。
-写入需要与实例来源绑定的 CSRF token，并校验 Origin / Fetch Metadata。
-所有者密码是 Worker Secret，本地密码只放在被忽略的 `.dev.vars`。
-Cloudflare 自动提供的静态资源路径不能绕过鉴权。
+账号后端复用原版登录页和个人资料面板，D1 保存单一 `owner` 账号及可撤销会话，替换 P0 的 Basic。
+所有请求先进入 Worker；仅原版登录页的明确静态依赖、预登录 CSRF 和登录接口允许匿名。
+主应用、插件、用户数据和其他 API 均需 Cookie 会话；静态资源绑定不能绕过 Worker。
+线上 Cookie 使用 Secure、HttpOnly、SameSite=Strict、host-only；本地回环 HTTP 是唯一开发例外。
+写入校验会话/预登录 CSRF、Origin 和 Fetch Metadata。账号支持登录限速、退出、改密和其他会话失效。
+`AUTH_PASSWORD` 保留为首次登录及恢复用的 Worker Secret，日常密码在账号面板修改。
+替换此 Secret 会使旧会话失效，持有新值的所有者才能恢复；不是匿名首次访问抢占账号。
+数据结构、密码校验、恢复边界与验证证据见 `ACCOUNT-AUTH.md`。
 P1 的 secrets API 使用独立 `DATA_KEY` 进行 AES-GCM 加密，不依赖登录密码派生。
 更换登录密码不会改变数据密钥；丢失 DATA_KEY 不能恢复模型凭据。
 此设计不等于任意扩展放入 settings 的敏感字段也会自动加密。

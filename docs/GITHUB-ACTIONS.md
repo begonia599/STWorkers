@@ -18,7 +18,7 @@ GitHub Actions 用于接替开发电脑完成“准备插件、打包、部署�
 - 使用仓库已有编译文件，不运行插件的 npm 生命周期、构建命令或 Git hook。
 - 输出到 `cloudflare/.build/assets-p3`，运行路径仍为原版 `scripts/extensions/third-party/`。
 - 默认只构建和 dry-run；显式勾选后才更新一个已经初始化的个人实例。
-- 本轮不自动开通账号、创建 Worker/D1/R2、执行数据库迁移或初始化密钥。
+- 不自动开通账号、创建 Worker/D1/R2 或初始化密钥；账号新版更新时会先执行增量 D1 迁移。
   已有手动首次测试流程见 `CLOUD-TEST.md`，新原生入口见 `NATIVE-DEPLOY.md`；
   完整的一键首次初始化仍属于未验收的 P5。
 - 新增工作流不会发布 npm、Docker、GitHub Release 或上传插件资源 artifact。
@@ -125,7 +125,7 @@ Secret：
 不要填入另一套数据库或新桶名；预检发现绑定不符会停止，不自动迁移或替换。
 
 Token 可按 Cloudflare 官方 CI 文档从 Edit Cloudflare Workers 权限策略建立，
-只限定到目标账号；还需能够读取本工作流检查的 D1 和 R2 资源元数据。
+只限定到目标账号；还需能够读取 D1/R2 元数据，并有目标 D1 的迁移写权限。
 最小权限组合仍需真实 Actions 验证。不要使用 Global API Key，不要把 Token 写进源码或工作流。
 
 **不需要把 `AUTH_PASSWORD`、`DATA_KEY` 或模型 API Key 复制到 GitHub。**
@@ -146,8 +146,8 @@ Token 可按 Cloudflare 官方 CI 文档从 Edit Cloudflare Workers 权限策略
    通过后在默认分支保存锁文件。下载或构建失败不会生成可部署的成功回执。
 8. 仅勾选 `deploy` 时，部署步骤获得 Cloudflare Token；先验证锁文件保存回执，
    再只读核对现有 Worker 绑定、D1 和 R2。
-9. 使用固定 Wrangler 4.129.1 更新，开启 `--strict`，关闭资源自动预配和创建，
-   不传 `--secrets-file`，不运行迁移或密钥写命令。
+9. 使用固定 Wrangler 4.129.1 对已核对的 DB 执行增量迁移，失败即停止上传；
+   再更新 Worker，开启 `--strict`，关闭资源自动预配和创建，不传 `--secrets-file` 或写入新密钥。
 10. 命令成功后再读绑定核对。后置核对失败会明确说明部署命令已经运行，不伪称没有上传。
 
 源码、依赖和仓库维护权限仍需要信任。下载的插件不执行构建脚本，不等于整个 CI 是不可信代码沙箱。
@@ -165,7 +165,8 @@ Cloudflare Token 只注入最后一个步骤，不在下载、依赖安装或构
 `upstream-lock.json` 与脚本中的 `PLUGIN_BASELINES` 继续保留为原 P3 对照基线，
 不是新增插件白名单，也不随用户清单改变而改写历史兼容证据。
 
-部署不改 D1 的设置、聊天、变量或插件安装记录，也不清理 R2。
+增量迁移会添加账号/会话表及迁移记录，不修改已有设置、聊天、变量或插件安装记录，也不清理 R2。
+Cookie 账号升级与恢复说明见 [ACCOUNT-AUTH.md](ACCOUNT-AUTH.md)，新的迁移步骤仍需真实 Actions 验证。
 已在线安装的版本、卸载 tombstone 仍按当前后端的优先级处理。
 bundled 当前指针以本次部署清单为准，不写数据库做破坏式迁移。
 因此重新部署不等于强制重装插件，也不保证旧部署中的 bundled 回退文件仍存在。

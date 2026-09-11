@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { ownerClient } from './owner-client.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn, execFile } from 'node:child_process';
@@ -21,7 +22,7 @@ assert.equal(config.name, deployment.name);
 assert.equal(config.account_id, deployment.accountId);
 assert.ok(base.startsWith('https://') && new URL(base).hostname.endsWith('.workers.dev'));
 const { AUTH_PASSWORD } = JSON.parse(await readFile(path.join(directory, 'secrets.json'), 'utf8'));
-const authorization = `Basic ${Buffer.from(`owner:${AUTH_PASSWORD}`).toString('base64')}`;
+const owner = await ownerClient(base, process.env.STWORKERS_TEST_PASSWORD || AUTH_PASSWORD);
 const runId = randomUUID();
 const output = path.join(root, '.build', 'p4-cloud', runId);
 const evidence = { runId, phase, startedAt: new Date().toISOString(), origin: base, requests: [],
@@ -43,7 +44,7 @@ async function send(route, { body, authenticated = true, headers = {} } = {}) {
     try {
         response = await fetch(url, {
         method: body === undefined ? 'GET' : 'POST', redirect: 'manual', signal: AbortSignal.timeout(120000),
-        headers: { ...(authenticated ? { Authorization: authorization } : {}),
+        headers: { ...(authenticated ? owner.headers : {}),
             'X-STWorkers-P4': runId,
             ...(body === undefined ? {} : { Origin: base, 'X-CSRF-Token': csrf, 'Content-Type': 'application/json' }),
             ...headers },
