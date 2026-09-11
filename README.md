@@ -18,15 +18,25 @@
 
 请使用全新资源和非重要测试资料，保留原始资料的独立备份。
 
+1. **准备 Cloudflare 账号。** 先注册并登录自己的 Cloudflare 账号；注册过程不在本教程中演示。
+2. **先开通 R2。** 在 Cloudflare 控制台搜索 `R2`，进入「R2 对象存储」。
+   初次开通时，按页面提示绑定支付方式并完成 R2 开通确认；已经开通的账号可跳过。
+   此时无需手动创建存储桶，项目所需的新资源在后面的部署流程中配置。
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/begonia599/STWorkers)
 
-1. 点击按钮，登录 Cloudflare 并授权自己的 GitHub/GitLab 账号。
-2. 设置新副本名称，例如仓库 `STWorkers-button-test`、Worker `stworkers-button-test`；
-   D1 和 R2 也使用新资源，不选择已有测试实例或其数据库。
-3. 自行设置非空的登录密码 `AUTH_PASSWORD`，没有 24 字符要求，也不是模型 API Key。构建根目录为仓库根目录，
-   构建命令 `npm run build`，部署命令 `npm run deploy`。
-4. 点击部署，成功后打开平台给出的地址，在原版登录页选择 `owner`，首次密码为上一步设置的值。
+3. **回到 GitHub 仓库，点击上方 Deploy to Cloudflare 按钮。** 按页面指引授权自己的 GitHub/GitLab 账号，
+   设置新副本名称，例如仓库 `STWorkers-button-test`、Worker `stworkers-button-test`；
+   D1 和 R2 也使用新资源，不选择已有实例或其数据库。
+4. **填写变量参数。** 自行设置非空的登录密码 `AUTH_PASSWORD`，没有 24 字符要求，也不是模型 API Key。
+   `DATA_KEY` 由首次部署自动生成，不需要自行填写。其余构建参数保持默认：
+   根目录为仓库根目录，构建命令 `npm run build`，部署命令 `npm run deploy`。
+5. **点击部署并等待完成。** 成功后打开平台给出的地址，在原版登录页选择 `owner`，首次密码为上一步设置的值。
    登录后可在原版「账户」面板修改日常密码；不再使用浏览器 Basic 弹窗。
+
+**支付说明：** 绑定支付方式用于 Cloudflare 的验证及 R2 计费开通，不是向本项目付款。
+R2 可从免费月度额度开始使用，但 Cloudflare 可能进行临时预授权；预授权不等于正式扣款。
+超出 R2 标准存储免费额度仍会按量计费，不承诺无限免费。详见[开通与费用说明](docs/NATIVE-DEPLOY.md#r2-开通与费用)。
 
 默认预装酒馆助手和 EJS，可在自己的仓库编辑 `plugins.txt`。
 首次构建 Token 权限、资源预配、密钥初始化的真实平台结果仍待验证；失败时保留资源和构建日志，
