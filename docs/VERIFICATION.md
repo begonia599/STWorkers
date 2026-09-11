@@ -710,6 +710,38 @@ Worker 产物 SHA-256：
 当前预装版本未变，工作流不修改 D1 插件指针或覆盖在线安装/卸载记录。
 完整使用步骤和边界见 `GITHUB-ACTIONS.md`。
 
+## 2026-09-11：私有仓库首次推送与 GitHub 托管构建
+
+所有者本轮授权仅覆盖推送现有私有仓库和一次 build-only 验证，
+不包含 Cloudflare 部署、资源创建、密钥配置或套餐调整。
+
+- 首次提交 `7383a027aed30e5c09b5daf15d8138c3c9283e2c` 已推送到
+  `begonia599/STWorkers` 的 `main`，GitHub API 确认仓库仍为私有，远端提交一致。
+- 保留公开上游 Git 历史用于原版源码对照；122 个变更路径经路径、哈希与敏感文件检查后显式暂存，
+  提交中不包含 `.build`、`.deploy`、`.dev.vars`、用户聊天/角色卡 ZIP 或插件源归档。
+- 上游十个工作流移至 `.github/upstream-workflows/` 仅供参考；
+  新增启用清单测试，216 项本地测试通过（Actions 专项 17 项），普通 dry-run 再次通过。
+- HTTPS 首次大包传输未完成，核实远端仍为空后，改用已存在的所有者 Windows SSH 登录完成上传；
+  主机密钥由 GitHub 官方 HTTPS 元数据核实。没有生成/上传新 SSH 密钥或更改全局 Git/SSH 配置。
+- GitHub 仓库在首次推送后运行记录为 0，仅启用 `.github/workflows/stworkers-deploy.yml`。
+  随后显式手动触发一次 `deploy=false`：
+  [运行 #1](https://github.com/begonia599/STWorkers/actions/runs/34605582171)，attempt 1，结论 `success`。
+- 托管环境 `ubuntu-24.04`、Node 22.14.0；任务于北京时间 21:39:50 开始、21:41:01 完成。
+  两次忽略生命周期脚本的依赖安装成功；216 项测试通过，0 失败、0 跳过。
+- 实际下载 Helper 4.9.5 与 EJS 1.17.9，两份归档 SHA-256 分别为
+  `be7919088b9fdb0edf0544b683cdc23895823a463c7a8b36536ad517bdc5c07a`、
+  `1a866075e0bf7499f4fb0c39e5e763077aeddfee851624b4464289176943546b`，与本地基线一致。
+- 打包 593 个明确选择的 public 源文件及两插件，最终 742 项静态资源；
+  Linux runner 的 Wrangler dry-run 为 651.64 KiB、gzip 125.75 KiB。
+- API 逐步记录确认 `Check deployment selection` 和
+  `Verify bindings and update the existing instance` 均为 `skipped`；artifact 数量为 0。
+- 读取任务日志复核以上测试、插件哈希、打包与 dry-run 输出；
+  日志下载请求没有携带 GitHub Authorization，凭据未输出或写入日志。
+
+没有配置 GitHub/Cloudflare Secrets，没有经 Actions 更新站点、创建资源、运行迁移或调用模型。
+这是首次真实 GitHub 托管构建证据，不是 Cloudflare 更新、免费额度或完整生态验收。
+既有云端测试站点未因本轮改变；受限 Token、真实更新及更新后模型/角色卡流程仍待授权验证。
+
 ## 待验证
 
 - 原版前端完整初始化和所有核心编辑流程；当前只有记录的合成资料路径通过。
@@ -722,8 +754,8 @@ Worker 产物 SHA-256：
 - 更多独立前端复杂样例、临界 Token 边界、非幂等宏及社区变量流程；真实模型接口。
 - 当前账号账单套餐与免费额度；首次独立部署、基础存储及首屏已有上述云端证据，
   不能替代完整云端、真实模型或资源消耗验收。
-- 实际 GitHub 托管 Actions 的依赖安装、插件拉取、云端 Token 权限、更新与运行验收；
-  当前只有本地同脚本构建和隔离浏览器证据。
+- Actions 的 Cloudflare Token 权限、真实更新与更新后运行验收；
+  GitHub 托管依赖安装、插件拉取和 dry-run 已于 2026-09-11 通过，不能替代云端部署证据。
 
 上述状态必须逐项更新，不能用前一阶段的通过推断后一阶段通过。
 

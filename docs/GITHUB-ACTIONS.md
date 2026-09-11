@@ -1,6 +1,6 @@
 # GitHub Actions 预装发布
 
-日期：2026-09-10。
+更新日期：2026-09-11。
 当前优先路线是用 GitHub Actions 接替开发电脑完成“准备插件、打包、部署”。
 不是在网页点击安装后启动一个后台任务，也不是让 Worker 继续解压 Actions 下载的 ZIP。
 在线安装后端的性能优化留到后续细化；已有在线安装功能不删除，也不据此标记免费资源门槛通过。
@@ -17,8 +17,9 @@
   原 ST 的十个工作流已移到 `.github/upstream-workflows/` 仅作参考，
   不参与本仓库 push、定时、Issue、PR 或发布事件。当前仅激活本手动工作流。
 
-这轮只完成本地实现和验证，未推送仓库、配置 GitHub Secrets 或启动真实 Actions。
-GitHub 托管 Linux runner 和 Actions 到 Cloudflare 的实际部署仍待验证。
+2026-09-11 已推送到所有者私有仓库，首次 GitHub 托管 Linux 构建成功。
+本次 `deploy=false`，没有配置 GitHub Secrets、通过 Actions 部署 Cloudflare 或修改云端资源。
+Actions 到 Cloudflare 的 Token 权限、真实更新和运行验收仍待验证。
 
 ## 使用入口
 
@@ -135,7 +136,32 @@ node cloudflare/scripts/check-actions-local.mjs <提供-playwright-的-package.j
   D1 扩展归档记录 0；页面异常和 HTTP 错误均为 0。
 - 这不是真实 GitHub Actions、云端发布、完整卡片或免费套餐验收。
 
-具体回归记录见 `VERIFICATION.md`。真实 Actions 运行及部署证据尚未产生。
+具体本地回归记录见 `VERIFICATION.md`；下节为独立的托管构建证据，不代表真实部署。
+
+2026-09-11 首次上传前追加验证：归档上游十个工作流，新增启用工作流清单测试；
+216 项本地测试通过（Actions 专项 17 项），普通构建与 Wrangler dry-run 再次通过。
+
+## GitHub 托管验证
+
+2026-09-11，经所有者授权，代码首次推送到私有仓库
+`begonia599/STWorkers` 的 `main`，只手动触发一次构建验证。
+
+- 运行：[Actions #1](https://github.com/begonia599/STWorkers/actions/runs/34605582171)，
+  attempt 1，结论 `success`。
+- 测试提交：`7383a027aed30e5c09b5daf15d8138c3c9283e2c`。
+- 环境：GitHub 托管 `ubuntu-24.04`、Node 22.14.0；任务运行约 71 秒，
+  北京时间 21:39:50 至 21:41:01。
+- 两次 `npm ci --ignore-scripts` 成功；216 项测试通过，0 失败、0 跳过。
+- Helper 4.9.5、EJS 1.17.9 的实际下载 SHA-256 与锁定值一致。
+- 打包 593 个明确选择的 public 源文件及两插件，最终 742 项静态资源。
+- Linux runner 的 Worker dry-run：651.64 KiB，gzip 125.75 KiB。
+- 部署选择检查和实际更新实例步骤均为 `skipped`，artifact 数量为 0。
+- 仓库仍为私有，仅启用 STWorkers 手动工作流；上游自动发布、定时及 Issue/PR 工作流不运行。
+
+这证明“准备插件、打包、dry-run”已离开开发电脑在 GitHub 上完成，
+不是完整“一键首次部署”、真实 Cloudflare 更新、免费额度或完整社区卡验收。
+后续授权配置受限 Cloudflare Token 后，才测试更新已有个人实例；
+不需要将登录密码、`DATA_KEY` 或模型 Key 交给 GitHub。
 
 参考官方文档：
 
