@@ -34,13 +34,16 @@
 
 ### 预装插件清单
 
-现在本地代码支持根目录 [plugins.txt](plugins.txt)：一行一个公开 GitHub 插件仓库地址。
+现在支持根目录 [plugins.txt](plugins.txt)：一行一个公开 GitHub 插件仓库地址。
 默认酒馆助手和 EJS 不必修改；新增插件只需加一行，再运行构建。
 具体提交与归档哈希由 [plugins.lock.json](plugins.lock.json) 保存，普通重建不自动升级；
 工作流新增 `update_plugins` 选项供主动更新已有插件。
 成功的默认分支构建会用 GitHub 自带临时凭据保存锁文件，不要求另申请 GitHub Token。
 
-当前清单改造尚未推送或经过新版 GitHub 托管运行；Cloudflare 部署仍需已有实例及部署凭据。
+2026-09-11 清单改造已推送，并通过真实 GitHub Actions #2：247 项测试、两插件下载、
+742 项资源打包及 dry-run 通过；自动凭据确认锁文件未变，没有生成额外提交。
+本次 `deploy=false`、`update_plugins=false`；有变化的锁文件自动回写仍待单独验证。
+Cloudflare 部署仍需已有实例及部署凭据。
 完整的“Fork、账号授权、首次自动初始化”入口仍未完成。
 清单支持不等于所有插件兼容，纯源码分支不会被自动执行构建脚本。
 

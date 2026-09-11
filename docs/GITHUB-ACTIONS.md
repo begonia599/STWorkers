@@ -22,7 +22,10 @@
 2026-09-11，清单改造前的固定两插件版本已推送到所有者私有仓库，首次 GitHub 托管 Linux 构建成功。
 本次 `deploy=false`，没有配置 GitHub Secrets、通过 Actions 部署 Cloudflare 或修改云端资源。
 Actions 到 Cloudflare 的 Token 权限、真实更新和运行验收仍待验证。
-本轮清单与锁文件自动保存改造只在本地验证，尚未推送或运行新版托管工作流。
+清单改造随后已推送，2026-09-11 GitHub Actions #2 成功：
+247 项测试、默认两插件打包和锁文件无变化路径通过；
+`deploy=false`、`update_plugins=false`，没有额外锁文件提交或 Cloudflare 部署。
+有变化的锁文件自动回写仍未经过真实 GitHub 验证，不能用本次无变化路径替代。
 
 ## 用户只编辑清单
 
@@ -221,6 +224,26 @@ node cloudflare/scripts/check-actions-local.mjs <提供-playwright-的-package.j
 不是完整“一键首次部署”、真实 Cloudflare 更新、免费额度或完整社区卡验收。
 后续授权配置受限 Cloudflare Token 后，才测试更新已有个人实例；
 不需要将登录密码、`DATA_KEY` 或模型 Key 交给 GitHub。
+
+### 清单版本托管验证
+
+2026-09-11，经所有者授权，推送清单改造提交
+`91c9d4c1e2816e263fb068a92777de0ddf3ea3ca`，
+只触发一次 [Actions #2](https://github.com/begonia599/STWorkers/actions/runs/34614224428)，
+attempt 1，结论 `success`。
+
+- 输入：`deploy=false`、`update_plugins=false`，保持两款插件已有版本。
+- 环境：Ubuntu 24.04、Node 22.14.0；任务于北京时间 23:07:22 至 23:08:36 运行，约 74 秒。
+- 247 项测试通过，0 失败、0 跳过；两份真实归档的 SHA-256 与锁文件一致。
+- 593 项明确选择的 public 源文件、两插件，最终 742 项资源；Wrangler dry-run 通过，
+  Worker 为 652.28 KiB，gzip 125.87 KiB。这里不是实际上传。
+- 默认分支锁步骤使用内置临时凭据成功，日志确认锁文件未变、不需要仓库提交。
+- 部署选择检查与实际部署步骤均跳过，artifact 数量为 0。
+- 完成后核对仓库仍为私有，总运行数为 2，默认分支仍停在测试提交，
+  工作流未生成新提交。随后仅更新验证文档，不新增 Actions 运行。
+
+这次证明真实 GitHub 构建及锁文件无变化路径可用，不证明有变化时的 Git 写入、
+主动升级插件、Cloudflare 部署或完整首次授权初始化已经通过。
 
 参考官方文档：
 
