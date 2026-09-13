@@ -143,6 +143,12 @@ plugins.lock.json       构建流程保存的插件提交与归档哈希
 upstream-lock.json      ST 与两个插件的明确源码基线
 ```
 
+原版 Docker、Colab、Replit 和本地启动/更新入口已从当前发行源码清理；
+原版贡献、更新说明及安全说明集中在 `docs/`，入口见[上游参考](docs/UPSTREAM.md)。
+`src/`、`server.js` 和 `webpack.config.js` 仍用于原版对照，不是 Workers 部署入口。
+本地 `data/`、`backups/`、编辑器配置和原版 Node 服务端 `plugins/` 目录不纳入 Git，
+不会因本次整理而清空；服务端插件目录与本项目的前端预装清单 `plugins.txt` 不同。
+
 源码基于 ST `1.18.0`，提交 `8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8`。
 原版 Node 后端及外围扩展暂留作参考，不表示本项目支持其全部功能。
 

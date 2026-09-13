@@ -130,23 +130,14 @@
     },
     "version": "1.18.0",
     "scripts": {
-        "init": "node src/server-init.js",
         "start": "npm --prefix cloudflare run dev",
         "build": "node cloudflare/scripts/build-entry.mjs",
         "build:cloud": "node cloudflare/scripts/build-entry.mjs --cloud",
         "deploy": "node cloudflare/scripts/native-cloud.mjs deploy",
         "test": "npm --prefix cloudflare test",
         "start:upstream": "node server.js",
-        "debug": "node --inspect server.js",
-        "start:global": "node server.js --global",
-        "start:electron": "cd ./src/electron && npm run start",
-        "start:deno": "deno run --allow-run --allow-net --allow-read --allow-write --allow-sys --allow-env server.js",
-        "start:bun": "bun server.js",
-        "start:no-csrf": "node server.js --disableCsrf",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
-        "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
-        "plugins:update": "node plugins update",
-        "plugins:install": "node plugins install"
+        "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix"
     },
     "bin": {
         "sillytavern": "./src/server-global.js"
